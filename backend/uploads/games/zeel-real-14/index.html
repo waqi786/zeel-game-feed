@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Memory Cards</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #12141C; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #12141C; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#12141C';
+    const CARD_BACK = '#2C3140';
+    const COLORS = ['#FF3D57', '#FFC93C', '#00C48C', '#5B8DEF', '#B85CFF', '#FF7043', '#00E5FF', '#EDE0C8'];
+    const COLS = 4, ROWS = 4;
+
+    let dpr = 1, w = 0, h = 0, cellSize = 0, boardLeft = 0, boardTop = 0;
+    let cards = [], flipped = [], score = 0, started = false, ended = false, muted = true, lockInput = false, moves = 0;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      cellSize = Math.floor((w - 48 * dpr) / COLS);
+      boardLeft = (w - cellSize * COLS) / 2;
+      boardTop = h * 0.26;
+      draw();
+    }
+
+    function reset() {
+      const values = [...Array(8).keys(), ...Array(8).keys()];
+      for (let i = values.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [values[i], values[j]] = [values[j], values[i]];
+      }
+      cards = values.map((v) => ({ value: v, open: false, matched: false }));
+      flipped = []; score = 0; moves = 0; ended = false; lockInput = false;
+      scoreEl.textContent = score;
+    }
+
+    function start() {
+      hud.style.display = 'flex';
+      started = true;
+      raf = requestAnimationFrame(loop);
+    }
+
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) start();
+    }
+
+    function cellAt(x, y) {
+      const c = Math.floor((x - boardLeft) / cellSize);
+      const r = Math.floor((y - boardTop) / cellSize);
+      if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return -1;
+      return r * COLS + c;
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (lockInput) return;
+      const idx = cellAt(x, y);
+      if (idx < 0) return;
+      const card = cards[idx];
+      if (!card || card.open || card.matched) return;
+      card.open = true;
+      flipped.push(idx);
+      if (flipped.length === 2) {
+        moves++;
+        lockInput = true;
+        const [a, b] = flipped;
+        if (cards[a].value === cards[b].value) {
+          cards[a].matched = true; cards[b].matched = true;
+          score += 20;
+          scoreEl.textContent = score;
+          flipped = [];
+          lockInput = false;
+          if (cards.every((c) => c.matched)) { score += Math.max(0, 100 - moves * 3); scoreEl.textContent = score; ended = true; }
+        } else {
+          setTimeout(() => {
+            cards[a].open = false; cards[b].open = false;
+            flipped = [];
+            lockInput = false;
+          }, 650);
+        }
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      cards.forEach((card, i) => {
+        const r = Math.floor(i / COLS), c = i % COLS;
+        const x = boardLeft + c * cellSize, y = boardTop + r * cellSize;
+        const pad = 6 * dpr;
+        ctx.beginPath();
+        ctx.roundRect(x + pad, y + pad, cellSize - pad * 2, cellSize - pad * 2, 10 * dpr);
+        if (card.matched) {
+          ctx.fillStyle = 'rgba(255,255,255,.06)';
+          ctx.fill();
+        } else if (card.open) {
+          ctx.fillStyle = COLORS[card.value];
+          ctx.fill();
+        } else {
+          ctx.fillStyle = CARD_BACK;
+          ctx.fill();
+        }
+      });
+
+      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 120 * dpr, h * 0.14, 240 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.font = '900 ' + (11 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('FIND ALL MATCHING PAIRS', w * 0.5, h * 0.14 + 20 * dpr);
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = COLORS[2];
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText('YOU WIN!', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to play again', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() { draw(); raf = requestAnimationFrame(loop); }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Word Hunt</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #121212; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #121212; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#121212';
+    const TILE_BG = '#2A2A2A';
+    const CORRECT = '#00C48C';
+    const PRESENT = '#FFC93C';
+    const ABSENT = '#3A3A3A';
+    const TEXT_COLOR = '#FFFFFF';
+
+    const WORDS = ['REACT', 'PIXEL', 'BEACH', 'SPICE', 'PLANT', 'BRAVE', 'CHARM', 'DRIFT', 'FLAME', 'GHOST', 'HONEY', 'JOKER', 'LEMON', 'MAGIC', 'NOBLE', 'OCEAN', 'PIANO', 'QUEST', 'ROBOT', 'SOLAR'];
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true, won = false;
+    let target = '', guesses = [], current = '', row = 0, score = 0;
+    let keyRows = ['QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM'];
+    let keyStates = {};
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      draw();
+    }
+
+    function reset() {
+      target = WORDS[Math.floor(Math.random() * WORDS.length)];
+      guesses = []; current = ''; row = 0; score = 0; ended = false; won = false;
+      keyStates = {};
+      scoreEl.textContent = score;
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) { if (ended) { reset(); return; } if (!started) start(); }
+
+    function evaluate(guess) {
+      const result = Array(5).fill('absent');
+      const targetArr = target.split('');
+      const guessArr = guess.split('');
+      const used = Array(5).fill(false);
+      for (let i = 0; i < 5; i++) {
+        if (guessArr[i] === targetArr[i]) { result[i] = 'correct'; used[i] = true; }
+      }
+      for (let i = 0; i < 5; i++) {
+        if (result[i] === 'correct') continue;
+        const idx = targetArr.findIndex((c, j) => c === guessArr[i] && !used[j]);
+        if (idx >= 0) { result[i] = 'present'; used[idx] = true; }
+      }
+      return result;
+    }
+
+    function submitGuess() {
+      if (current.length !== 5) return;
+      const result = evaluate(current);
+      guesses.push({ word: current, result });
+      current.split('').forEach((ch, i) => {
+        const r = result[i];
+        const prev = keyStates[ch];
+        if (r === 'correct') keyStates[ch] = 'correct';
+        else if (r === 'present' && prev !== 'correct') keyStates[ch] = 'present';
+        else if (!prev) keyStates[ch] = 'absent';
+      });
+      if (current === target) {
+        won = true; ended = true; score = (6 - row) * 20;
+        scoreEl.textContent = score;
+      } else {
+        row++;
+        current = '';
+        if (row >= 6) { ended = true; won = false; }
+      }
+    }
+
+    function typeKey(key) {
+      if (ended) return;
+      if (key === 'ENTER') { submitGuess(); return; }
+      if (key === 'BACK') { current = current.slice(0, -1); return; }
+      if (current.length < 5 && /^[A-Z]$/.test(key)) current += key;
+    }
+
+    function keyRects() {
+      const rects = [];
+      const kbTop = h * 0.72;
+      const kh = 46 * dpr;
+      keyRows.forEach((rowStr, r) => {
+        const keys = r === 2 ? ['ENTER', ...rowStr.split(''), 'BACK'] : rowStr.split('');
+        const totalW = w - 20 * dpr;
+        const kw = totalW / keys.length;
+        keys.forEach((k, i) => {
+          rects.push({ key: k, x: 10 * dpr + i * kw, y: kbTop + r * (kh + 6 * dpr), w: kw - 4 * dpr, h: kh });
+        });
+      });
+      return rects;
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      const rects = keyRects();
+      for (const r of rects) {
+        if (x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h) {
+          typeKey(r.key);
+          return;
+        }
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      const cellSize = Math.min((w - 40 * dpr) / 5, 60 * dpr);
+      const boardLeft = (w - cellSize * 5) / 2;
+      const boardTop = h * 0.14;
+
+      for (let r = 0; r < 6; r++) {
+        const guessObj = guesses[r];
+        const word = r === row ? current : (guessObj ? guessObj.word : '');
+        for (let c = 0; c < 5; c++) {
+          const x = boardLeft + c * cellSize, y = boardTop + r * (cellSize + 6 * dpr);
+          let bgColor = TILE_BG;
+          if (guessObj) {
+            const res = guessObj.result[c];
+            bgColor = res === 'correct' ? CORRECT : res === 'present' ? PRESENT : ABSENT;
+          }
+          ctx.fillStyle = bgColor;
+          ctx.beginPath();
+          ctx.roundRect(x + 3 * dpr, y, cellSize - 6 * dpr, cellSize - 6 * dpr, 4 * dpr);
+          ctx.fill();
+          const ch = word[c];
+          if (ch) {
+            ctx.fillStyle = TEXT_COLOR;
+            ctx.font = '900 ' + Math.floor(cellSize * 0.42) + 'px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(ch, x + cellSize / 2, y + cellSize / 2 - 2 * dpr);
+          }
+        }
+      }
+      ctx.textBaseline = 'alphabetic';
+
+      const rects = keyRects();
+      rects.forEach((r) => {
+        const state = keyStates[r.key];
+        ctx.fillStyle = state === 'correct' ? CORRECT : state === 'present' ? PRESENT : state === 'absent' ? ABSENT : '#3E3E3E';
+        ctx.beginPath();
+        ctx.roundRect(r.x, r.y, r.w, r.h, 6 * dpr);
+        ctx.fill();
+        ctx.fillStyle = TEXT_COLOR;
+        ctx.font = '800 ' + Math.floor(r.h * 0.32) + 'px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(r.key.length > 1 ? r.key.slice(0, 4) : r.key, r.x + r.w / 2, r.y + r.h / 2);
+      });
+      ctx.textBaseline = 'alphabetic';
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (22 * dpr) + 'px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('GUESS THE 5-LETTER WORD', w / 2, h * 0.08);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.78)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = won ? CORRECT : '#FF3D57';
+        ctx.font = '900 ' + (28 * dpr) + 'px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(won ? 'SOLVED!' : target, w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap for new word', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() { draw(); raf = requestAnimationFrame(loop); }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('keydown', (e) => {
+      if (!started) start();
+      if (e.key === 'Enter') { submitGuess(); return; }
+      if (e.key === 'Backspace') { current = current.slice(0, -1); return; }
+      if (/^[a-zA-Z]$/.test(e.key)) typeKey(e.key.toUpperCase());
+    });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

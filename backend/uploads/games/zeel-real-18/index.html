@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Simon Beats</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #101012; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #101012; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#101012';
+    const PAD_COLORS = ['#FF3D57', '#FFC93C', '#00C48C', '#5B8DEF'];
+    const PAD_LIT = ['#FF8095', '#FFE08A', '#6BFFCB', '#A9C4FF'];
+
+    let dpr = 1, w = 0, h = 0, cx = 0, cy = 0, radius = 0;
+    let sequence = [], playerIdx = 0, score = 0, started = false, ended = false, muted = true;
+    let showingSeq = false, litPad = -1, litTimer = 0, waitTimer = 0, gameState = 'idle';
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      cx = w / 2; cy = h * 0.5;
+      radius = Math.min(w, h) * 0.32;
+      draw();
+    }
+
+    function reset() {
+      sequence = []; playerIdx = 0; score = 0; ended = false;
+      scoreEl.textContent = score;
+      gameState = 'idle';
+    }
+
+    function start() {
+      hud.style.display = 'flex';
+      started = true;
+      raf = requestAnimationFrame(loop);
+      addToSequence();
+    }
+
+    function addToSequence() {
+      sequence.push(Math.floor(Math.random() * 4));
+      playerIdx = 0;
+      gameState = 'showing';
+      showingSeq = true;
+      waitTimer = 0.5;
+    }
+
+    function control(name) {
+      if (ended) { reset(); start(); return; }
+      if (!started) { start(); return; }
+    }
+
+    function padAt(x, y) {
+      const dx = x - cx, dy = y - cy;
+      const dist = Math.hypot(dx, dy);
+      if (dist < radius * 0.32 || dist > radius * 1.05) return -1;
+      let angle = Math.atan2(dy, dx);
+      if (angle < 0) angle += Math.PI * 2;
+      const idx = Math.floor(((angle + Math.PI / 4) % (Math.PI * 2)) / (Math.PI / 2));
+      return idx;
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); start(); return; }
+      if (!started) { start(); return; }
+      if (gameState !== 'playing') return;
+      const idx = padAt(x, y);
+      if (idx < 0) return;
+      litPad = idx; litTimer = 0.2;
+      if (idx === sequence[playerIdx]) {
+        playerIdx++;
+        score += 10;
+        scoreEl.textContent = score;
+        if (playerIdx >= sequence.length) {
+          gameState = 'showing';
+          showingSeq = true;
+          waitTimer = 0.7;
+        }
+      } else {
+        ended = true;
+      }
+    }
+
+    function step(dt) {
+      if (litTimer > 0) { litTimer -= dt; if (litTimer <= 0) litPad = -1; }
+      if (gameState === 'showing') {
+        waitTimer -= dt;
+        if (waitTimer <= 0) {
+          if (!showSeqIdx && showSeqIdx !== 0) window.showSeqIdx = 0;
+          showSequenceStep();
+        }
+      }
+    }
+
+    let showSeqIdx = 0, seqStepTimer = 0;
+    function showSequenceStep() {
+      if (seqStepTimer > 0) return;
+      if (showSeqIdx >= sequence.length) {
+        showSeqIdx = 0;
+        gameState = 'playing';
+        return;
+      }
+      litPad = sequence[showSeqIdx];
+      litTimer = 0.45;
+      seqStepTimer = 0.62;
+      showSeqIdx++;
+    }
+
+    function tickSeqTimer(dt) {
+      if (seqStepTimer > 0) {
+        seqStepTimer -= dt;
+        if (seqStepTimer <= 0) seqStepTimer = 0;
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      for (let i = 0; i < 4; i++) {
+        const startAngle = -Math.PI / 4 + i * Math.PI / 2;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.arc(cx, cy, radius, startAngle, startAngle + Math.PI / 2);
+        ctx.closePath();
+        ctx.fillStyle = litPad === i ? PAD_LIT[i] : PAD_COLORS[i];
+        ctx.fill();
+      }
+      ctx.fillStyle = BG;
+      ctx.beginPath();
+      ctx.arc(cx, cy, radius * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 120 * dpr, h * 0.12, 240 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.font = '900 ' + (12 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(gameState === 'showing' ? 'WATCH THE PATTERN' : 'REPEAT THE PATTERN', w * 0.5, h * 0.12 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (26 * dpr) + 'px Arial';
+        ctx.fillText('TAP TO START', w / 2, h * 0.16);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = PAD_COLORS[0];
+        ctx.font = '900 ' + (32 * dpr) + 'px Arial';
+        ctx.fillText('GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0, lastT = 0;
+    function loop(t) {
+      const dt = lastT ? Math.min(0.05, (t - lastT) / 1000) : 0;
+      lastT = t;
+      if (started && !ended) {
+        if (litTimer > 0) { litTimer -= dt; if (litTimer <= 0 && gameState !== 'showing') litPad = -1; }
+        if (gameState === 'showing') {
+          tickSeqTimer(dt);
+          if (seqStepTimer <= 0) showSequenceStep();
+        }
+      }
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

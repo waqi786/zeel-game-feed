@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>RPS Duel</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #101820; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #101820; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#101820';
+    const CHOICE_COLORS = ['#FF3D57', '#FFC93C', '#5B8DEF'];
+    const SYMBOLS = ['ROCK', 'PAPER', 'SCISSORS'];
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true;
+    let score = 0, round = 0, wins = 0, losses = 0, resultText = '', resultTimer = 0;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      draw();
+    }
+
+    function reset() {
+      score = 0; round = 0; wins = 0; losses = 0; ended = false; resultText = '';
+      scoreEl.textContent = score;
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+
+    function beats(a, b) { return (a === 0 && b === 2) || (a === 1 && b === 0) || (a === 2 && b === 1); }
+
+    function play(choice) {
+      if (ended || !started || resultTimer > 0) return;
+      const cpu = Math.floor(Math.random() * 3);
+      round++;
+      let outcome;
+      if (choice === cpu) { outcome = 'DRAW'; }
+      else if (beats(choice, cpu)) { outcome = 'WIN'; wins++; score += 15; }
+      else { outcome = 'LOSE'; losses++; }
+      resultText = 'YOU: ' + SYMBOLS[choice] + '  CPU: ' + SYMBOLS[cpu] + '  ' + outcome;
+      resultTimer = 1.1;
+      scoreEl.textContent = score;
+      if (losses >= 3) { setTimeout(() => { ended = true; }, 1100); }
+      if (round >= 10) { setTimeout(() => { ended = true; }, 1100); }
+    }
+
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (name === 'LEFT') play(0);
+      if (name === 'JUMP') play(1);
+      if (name === 'RIGHT') play(2);
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      const idx = Math.floor((x / w) * 3);
+      play(Math.max(0, Math.min(2, idx)));
+    }
+
+    function step(dt) {
+      if (resultTimer > 0) resultTimer -= dt;
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      const btnY = h * 0.6, btnH = h * 0.22;
+      for (let i = 0; i < 3; i++) {
+        const bx = (w / 3) * i;
+        ctx.fillStyle = CHOICE_COLORS[i];
+        ctx.beginPath();
+        ctx.roundRect(bx + 10 * dpr, btnY, w / 3 - 20 * dpr, btnH, 14 * dpr);
+        ctx.fill();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (13 * dpr) + 'px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(SYMBOLS[i], bx + w / 6, btnY + btnH / 2 + 5 * dpr);
+      }
+
+      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 130 * dpr, h * 0.14, 260 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 ' + (11 * dpr) + 'px Arial';
+      ctx.fillText('WINS: ' + wins + '   LOSSES: ' + losses + '/3', w * 0.5, h * 0.14 + 20 * dpr);
+
+      if (resultText && resultTimer > 0) {
+        ctx.fillStyle = 'rgba(0,0,0,.6)';
+        ctx.beginPath();
+        ctx.roundRect(w * 0.5 - 160 * dpr, h * 0.36, 320 * dpr, 60 * dpr, 14 * dpr);
+        ctx.fill();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText(resultText, w / 2, h * 0.40);
+      }
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (24 * dpr) + 'px Arial';
+        ctx.fillText('CHOOSE ROCK PAPER OR SCISSORS', w / 2, h * 0.30);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = wins > losses ? '#00C48C' : '#FF3D57';
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText(wins > losses ? 'YOU WIN!' : 'GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to play again', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0, lastT = 0;
+    function loop(t) {
+      const dt = lastT ? Math.min(0.05, (t - lastT) / 1000) : 0;
+      lastT = t;
+      if (started) step(dt);
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

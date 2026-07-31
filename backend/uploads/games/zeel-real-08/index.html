@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Bubble Pop</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #071426; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #071426; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#071426';
+    const COLORS = ['#FF3D57', '#FFC93C', '#00C48C', '#5B8DEF', '#B85CFF'];
+    const COLS = 8;
+
+    let dpr = 1, w = 0, h = 0, r = 0, top = 0;
+    let grid = [], score = 0, started = false, ended = false, muted = true;
+    let shooter = { x: 0, y: 0, angle: -Math.PI / 2, color: 0 };
+    let flying = null, nextColor = 0;
+    let rowOffsetY = 0;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      r = w / (COLS * 2);
+      top = 130 * dpr;
+      shooter.x = w / 2;
+      shooter.y = h - 130 * dpr;
+      draw();
+    }
+
+    function cellPos(row, col) {
+      const offset = row % 2 === 0 ? 0 : r;
+      return { x: r + col * r * 2 + offset, y: top + row * r * 1.8 };
+    }
+
+    function reset() {
+      grid = [];
+      const rows = 6;
+      for (let row = 0; row < rows; row++) {
+        const cols = row % 2 === 0 ? COLS : COLS - 1;
+        const line = [];
+        for (let c = 0; c < cols; c++) line.push(Math.floor(Math.random() * COLORS.length));
+        grid.push(line);
+      }
+      score = 0; ended = false;
+      scoreEl.textContent = score;
+      nextColor = Math.floor(Math.random() * COLORS.length);
+      shooter.color = nextColor;
+      nextColor = Math.floor(Math.random() * COLORS.length);
+      flying = null;
+    }
+
+    function start() {
+      hud.style.display = 'flex';
+      started = true;
+      raf = requestAnimationFrame(loop);
+    }
+
+    function aimAt(x, y) {
+      const dx = x - shooter.x, dy = y - shooter.y;
+      let angle = Math.atan2(dy, dx);
+      angle = Math.max(-Math.PI + 0.15, Math.min(-0.15, angle));
+      shooter.angle = angle;
+    }
+
+    function fire() {
+      if (flying) return;
+      flying = {
+        x: shooter.x, y: shooter.y,
+        vx: Math.cos(shooter.angle) * 14 * dpr,
+        vy: Math.sin(shooter.angle) * 14 * dpr,
+        color: shooter.color
+      };
+    }
+
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (name === 'LEFT') aimAt(shooter.x - 60 * dpr, shooter.y - 200 * dpr);
+      if (name === 'RIGHT') aimAt(shooter.x + 60 * dpr, shooter.y - 200 * dpr);
+      if (name === 'JUMP' || name === 'BOOST') fire();
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      aimAt(x, y);
+      fire();
+    }
+    function pointerMove(x, y) {
+      if (!flying) aimAt(x, y);
+    }
+
+    function nearestCell(x, y) {
+      let best = null, bestD = Infinity;
+      for (let row = 0; row < grid.length; row++) {
+        for (let c = 0; c < grid[row].length; c++) {
+          const p = cellPos(row, c);
+          const d = Math.hypot(p.x - x, p.y - y);
+          if (d < bestD) { bestD = d; best = { row, c, p }; }
+        }
+      }
+      return best;
+    }
+
+    function step() {
+      if (flying) {
+        flying.x += flying.vx;
+        flying.y += flying.vy;
+        if (flying.x < r || flying.x > w - r) flying.vx *= -1;
+        let landed = flying.y <= top + r * 0.6;
+        if (!landed) {
+          for (let row = 0; row < grid.length; row++) {
+            for (let c = 0; c < grid[row].length; c++) {
+              if (grid[row][c] === null || grid[row][c] === undefined) continue;
+              const p = cellPos(row, c);
+              if (Math.hypot(p.x - flying.x, p.y - flying.y) < r * 1.8) { landed = true; }
+            }
+          }
+        }
+        if (landed) {
+          const nearest = nearestCell(flying.x, flying.y);
+          let row = nearest ? nearest.row : 0;
+          let col = nearest ? nearest.c : 0;
+          if (!grid[row]) grid[row] = [];
+          while (grid[row][col] !== undefined && grid[row][col] !== null) {
+            row++;
+            if (!grid[row]) grid[row] = [];
+            col = Math.min(col, grid[row].length);
+          }
+          grid[row][col] = flying.color;
+          const cluster = findCluster(row, col, flying.color);
+          if (cluster.length >= 3) {
+            cluster.forEach(([rr, cc]) => { grid[rr][cc] = null; });
+            score += cluster.length * 15;
+            scoreEl.textContent = score;
+          }
+          flying = null;
+          shooter.color = nextColor;
+          nextColor = Math.floor(Math.random() * COLORS.length);
+          if (grid.length > 11) ended = true;
+        }
+      }
+    }
+
+    function findCluster(row, col, color) {
+      const visited = new Set();
+      const stack = [[row, col]];
+      const result = [];
+      while (stack.length) {
+        const [r0, c0] = stack.pop();
+        const key = r0 + ',' + c0;
+        if (visited.has(key)) continue;
+        visited.add(key);
+        if (!grid[r0] || grid[r0][c0] !== color) continue;
+        result.push([r0, c0]);
+        const neighbors = [[r0 - 1, c0 - 1], [r0 - 1, c0], [r0, c0 - 1], [r0, c0 + 1], [r0 + 1, c0 - 1], [r0 + 1, c0]];
+        neighbors.forEach(([nr, nc]) => stack.push([nr, nc]));
+      }
+      return result;
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      grid.forEach((row, ri) => {
+        row.forEach((val, ci) => {
+          if (val === null || val === undefined) return;
+          const p = cellPos(ri, ci);
+          ctx.fillStyle = COLORS[val];
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r * 0.86, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      });
+
+      if (flying) {
+        ctx.fillStyle = COLORS[flying.color];
+        ctx.beginPath();
+        ctx.arc(flying.x, flying.y, r * 0.86, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255,255,255,.25)';
+      ctx.lineWidth = 3 * dpr;
+      ctx.setLineDash([8 * dpr, 8 * dpr]);
+      ctx.beginPath();
+      ctx.moveTo(shooter.x, shooter.y);
+      ctx.lineTo(shooter.x + Math.cos(shooter.angle) * 300 * dpr, shooter.y + Math.sin(shooter.angle) * 300 * dpr);
+      ctx.stroke();
+      ctx.restore();
+
+      ctx.fillStyle = COLORS[shooter.color];
+      ctx.beginPath();
+      ctx.arc(shooter.x, shooter.y, r * 0.9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 2 * dpr;
+      ctx.stroke();
+
+      ctx.fillStyle = COLORS[nextColor];
+      ctx.beginPath();
+      ctx.arc(shooter.x + 90 * dpr, shooter.y + 20 * dpr, r * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 130 * dpr, h * 0.06, 260 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.font = '900 ' + (10 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('TAP TO AIM & SHOOT BUBBLES', w * 0.5, h * 0.06 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (26 * dpr) + 'px Arial';
+        ctx.fillText('TAP TO START', w / 2, h * 0.30);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = COLORS[0];
+        ctx.font = '900 ' + (32 * dpr) + 'px Arial';
+        ctx.fillText('GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() {
+      if (started && !ended) step();
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('pointermove', (e) => pointerMove(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('touchmove', (e) => { const t = e.touches[0]; if (t) pointerMove(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER') {
+        if (data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+        else pointerMove(Number(data.x) * dpr, Number(data.y) * dpr);
+      }
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

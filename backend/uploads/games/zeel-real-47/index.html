@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Tower Bounce</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #101024; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #101024; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#101024';
+    const BALL_COLOR = '#FFC93C';
+    const RING_COLORS = ['#FF3D57', '#00E5FF', '#5B8DEF', '#00C48C'];
+    const GAP_COLOR = '#101024';
+
+    let dpr = 1, w = 0, h = 0, cx = 0;
+    let started = false, ended = false, muted = true;
+    let ballY = 0, vy = 0, towerRotation = 0, rings = [], score = 0, fallDistance = 0;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      cx = w / 2;
+      draw();
+    }
+
+    function makeRing(index) {
+      const gapAngle = Math.random() * Math.PI * 2;
+      const gapSize = Math.PI / 3;
+      return { y: index * 130 * dpr, gapAngle, gapSize, color: RING_COLORS[index % RING_COLORS.length], passed: false };
+    }
+
+    function reset() {
+      rings = [];
+      for (let i = 1; i <= 12; i++) rings.push(makeRing(i));
+      ballY = 0; vy = 0; towerRotation = 0; score = 0; fallDistance = 0; ended = false;
+      scoreEl.textContent = score;
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (name === 'LEFT') towerRotation -= 0.3;
+      if (name === 'RIGHT') towerRotation += 0.3;
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      towerRotation += x < w / 2 ? -0.35 : 0.35;
+    }
+
+    function step() {
+      vy += 0.55 * dpr;
+      ballY += vy;
+      fallDistance = ballY;
+
+      rings.forEach((r) => {
+        if (!r.passed && ballY + 60 * dpr > r.y && ballY < r.y) {
+          const ballAngle = ((towerRotation % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+          const gapStart = ((r.gapAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+          let diff = Math.abs(ballAngle - gapStart);
+          if (diff > Math.PI) diff = Math.PI * 2 - diff;
+          if (diff > r.gapSize / 2) {
+            vy = -14 * dpr;
+            score += 10;
+            scoreEl.textContent = score;
+          }
+          r.passed = true;
+        }
+      });
+
+      const cameraOffset = Math.max(0, ballY - h * 0.4);
+      rings.forEach((r) => { r.screenY = r.y - cameraOffset; });
+
+      if (rings.length && rings[rings.length - 1].y - cameraOffset < h) {
+        rings.push(makeRing(rings.length + 1));
+      }
+
+      if (ballY - cameraOffset > h + 40 * dpr) ended = true;
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      const cameraOffset = Math.max(0, ballY - h * 0.4);
+
+      rings.forEach((r) => {
+        const y = r.y - cameraOffset;
+        if (y < -60 * dpr || y > h + 60 * dpr) return;
+        ctx.save();
+        ctx.translate(cx, y);
+        ctx.rotate(towerRotation);
+        ctx.strokeStyle = r.color;
+        ctx.lineWidth = 14 * dpr;
+        ctx.beginPath();
+        ctx.arc(0, 0, 80 * dpr, r.gapAngle + r.gapSize / 2, r.gapAngle + Math.PI * 2 - r.gapSize / 2);
+        ctx.stroke();
+        ctx.restore();
+      });
+
+      ctx.fillStyle = BALL_COLOR;
+      ctx.beginPath();
+      ctx.arc(cx, h * 0.4, 12 * dpr, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 90 * dpr, h * 0.06, 180 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 ' + (14 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('SCORE: ' + score, w * 0.5, h * 0.06 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (22 * dpr) + 'px Arial';
+        ctx.fillText('TAP SIDES TO ROTATE TOWER', w / 2, h * 0.7);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = RING_COLORS[0];
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText('GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() {
+      if (started && !ended) step();
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('keydown', (e) => {
+      if (!started) start();
+      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') control('LEFT');
+      if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') control('RIGHT');
+    });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

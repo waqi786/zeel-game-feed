@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Maze Runner</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0D1117; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #0D1117; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#0D1117';
+    const WALL_COLOR = '#2B3542';
+    const PLAYER_COLOR = '#00E5FF';
+    const GOAL_COLOR = '#00C48C';
+    const SIZE = 11;
+
+    let dpr = 1, w = 0, h = 0, cell = 0, offX = 0, offY = 0;
+    let maze = [], px = 0, py = 0, gx = 0, gy = 0, score = 0, started = false, ended = false, muted = true, moves = 0;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      cell = Math.floor(Math.min(w - 20 * dpr, h * 0.7) / SIZE);
+      offX = (w - cell * SIZE) / 2;
+      offY = h * 0.2;
+      draw();
+    }
+
+    function genMaze() {
+      const g = Array.from({ length: SIZE }, () => Array(SIZE).fill(1));
+      function carve(x, y) {
+        g[y][x] = 0;
+        const dirs = [[2,0],[-2,0],[0,2],[0,-2]];
+        for (let i = dirs.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [dirs[i], dirs[j]] = [dirs[j], dirs[i]]; }
+        for (const [dx, dy] of dirs) {
+          const nx = x + dx, ny = y + dy;
+          if (nx > 0 && nx < SIZE - 1 && ny > 0 && ny < SIZE - 1 && g[ny][nx] === 1) {
+            g[y + dy / 2][x + dx / 2] = 0;
+            carve(nx, ny);
+          }
+        }
+      }
+      carve(1, 1);
+      g[SIZE - 2][SIZE - 2] = 0;
+      return g;
+    }
+
+    function reset() {
+      maze = genMaze();
+      px = 1; py = 1; gx = SIZE - 2; gy = SIZE - 2;
+      score = 0; ended = false; moves = 0;
+      scoreEl.textContent = score;
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+
+    function tryMove(dx, dy) {
+      if (ended || !started) return;
+      const nx = px + dx, ny = py + dy;
+      if (nx < 0 || nx >= SIZE || ny < 0 || ny >= SIZE) return;
+      if (maze[ny][nx] === 1) return;
+      px = nx; py = ny; moves++;
+      if (px === gx && py === gy) { score = Math.max(10, 300 - moves * 4); scoreEl.textContent = score; ended = true; }
+    }
+
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (name === 'LEFT') tryMove(-1, 0);
+      if (name === 'RIGHT') tryMove(1, 0);
+      if (name === 'JUMP') tryMove(0, -1);
+      if (name === 'BOOST') tryMove(0, 1);
+    }
+
+    let startX = 0, startY = 0;
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      startX = x; startY = y;
+    }
+    function pointerUp(x, y) {
+      const dx = x - startX, dy = y - startY;
+      if (Math.abs(dx) < 20 * dpr && Math.abs(dy) < 20 * dpr) return;
+      if (Math.abs(dx) > Math.abs(dy)) tryMove(dx > 0 ? 1 : -1, 0);
+      else tryMove(0, dy > 0 ? 1 : -1);
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      for (let y = 0; y < SIZE; y++) {
+        for (let x = 0; x < SIZE; x++) {
+          if (maze[y][x] === 1) {
+            ctx.fillStyle = WALL_COLOR;
+            ctx.fillRect(offX + x * cell, offY + y * cell, cell, cell);
+          }
+        }
+      }
+
+      ctx.fillStyle = GOAL_COLOR;
+      ctx.beginPath();
+      ctx.roundRect(offX + gx * cell + cell * 0.15, offY + gy * cell + cell * 0.15, cell * 0.7, cell * 0.7, 4 * dpr);
+      ctx.fill();
+
+      ctx.fillStyle = PLAYER_COLOR;
+      ctx.beginPath();
+      ctx.arc(offX + px * cell + cell / 2, offY + py * cell + cell / 2, cell * 0.32, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 120 * dpr, h * 0.92, 240 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.font = '900 ' + (11 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('SWIPE TO NAVIGATE MAZE', w * 0.5, h * 0.92 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (26 * dpr) + 'px Arial';
+        ctx.fillText('TAP TO START', w / 2, h * 0.10);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = GOAL_COLOR;
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText('MAZE CLEARED!', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap for new maze', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() { draw(); raf = requestAnimationFrame(loop); }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('pointerup', (e) => pointerUp(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('touchend', (e) => { const t = e.changedTouches[0]; if (t) pointerUp(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('keydown', (e) => {
+      if (!started) start();
+      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') { e.preventDefault(); tryMove(-1, 0); }
+      if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') { e.preventDefault(); tryMove(1, 0); }
+      if (e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') { e.preventDefault(); tryMove(0, -1); }
+      if (e.key === 'ArrowDown' || e.key.toLowerCase() === 's') { e.preventDefault(); tryMove(0, 1); }
+    });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

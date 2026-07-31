@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Temple Escape</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #1B120B; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #1B120B; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#1B120B';
+    const PATH_COLOR = '#3E2A18';
+    const PLAYER_COLOR = '#FFC93C';
+    const ROCK_COLOR = '#7A5230';
+    const GEM_COLOR = '#00E5FF';
+    const GAP_COLOR = '#1B120B';
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true, tick = 0;
+    let lane = 1, targetLane = 1, jumpT = 0, slideT = 0, score = 0, gems = 0, speed = 0;
+    let obstacles = [];
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      draw();
+    }
+
+    function laneX(l, y) {
+      const t = Math.max(0, Math.min(1, y / h));
+      const roadW = w * (0.28 + t * 0.66);
+      const left = w / 2 - roadW / 2;
+      return left + (roadW / 4) * (l + 1);
+    }
+
+    function reset() {
+      lane = 1; targetLane = 1; jumpT = 0; slideT = 0;
+      score = 0; gems = 0; ended = false; speed = 5.5; tick = 0;
+      scoreEl.textContent = score;
+      obstacles = [];
+      for (let i = 0; i < 8; i++) spawnRow(-i * 230 * dpr);
+    }
+
+    function spawnRow(y) {
+      const type = Math.random();
+      const l = Math.floor(Math.random() * 3);
+      if (type < 0.3) obstacles.push({ lane: l, y, type: 'rock', hit: false });
+      else if (type < 0.5) obstacles.push({ lane: l, y, type: 'gap', hit: false });
+      else if (type < 0.65) obstacles.push({ lane: l, y, type: 'low', hit: false });
+      if (Math.random() < 0.55) obstacles.push({ lane: Math.floor(Math.random() * 3), y: y - 50 * dpr, type: 'gem', hit: false });
+    }
+
+    function start() {
+      hud.style.display = 'flex';
+      started = true;
+      raf = requestAnimationFrame(loop);
+    }
+
+    function moveLeft() { targetLane = Math.max(0, targetLane - 1); }
+    function moveRight() { targetLane = Math.min(2, targetLane + 1); }
+    function doJump() { if (jumpT <= 0) jumpT = 1; }
+    function doSlide() { slideT = 26; }
+
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (name === 'LEFT') moveLeft();
+      if (name === 'RIGHT') moveRight();
+      if (name === 'JUMP') doJump();
+      if (name === 'BOOST') doSlide();
+    }
+
+    let startX = 0, startY = 0, dragging = false;
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      startX = x; startY = y; dragging = true;
+    }
+    function pointerUp(x, y) {
+      if (!dragging) return;
+      dragging = false;
+      const dx = x - startX, dy = y - startY;
+      const absX = Math.abs(dx), absY = Math.abs(dy);
+      if (Math.max(absX, absY) < 26) { doJump(); return; }
+      if (absX > absY) { dx > 0 ? moveRight() : moveLeft(); }
+      else { dy < 0 ? doJump() : doSlide(); }
+    }
+
+    function step() {
+      tick++;
+      speed = Math.min(12, 5.5 + score / 380);
+      lane += (targetLane - lane) * 0.22;
+      if (jumpT > 0) jumpT = Math.max(0, jumpT - 0.045);
+      if (slideT > 0) slideT--;
+      score += 1;
+      scoreEl.textContent = score + gems * 8;
+
+      obstacles.forEach((o) => { o.y += speed * dpr; });
+      obstacles = obstacles.filter((o) => o.y < h + 100 * dpr);
+      if (!obstacles.length || Math.min(...obstacles.map((o) => o.y)) > -900 * dpr) spawnRow(-100 * dpr);
+
+      const px = laneX(lane, h * 0.72);
+      const airborne = jumpT > 0.18;
+      obstacles.forEach((o) => {
+        if (o.hit) return;
+        const ox = laneX(o.lane, o.y);
+        const closeX = Math.abs(ox - px) < 44 * dpr;
+        const closeY = Math.abs(o.y - h * 0.72) < 44 * dpr;
+        if (closeX && closeY) {
+          if (o.type === 'gem') { o.hit = true; gems++; }
+          else if (o.type === 'rock' && !airborne) ended = true;
+          else if (o.type === 'gap' && !airborne) ended = true;
+          else if (o.type === 'low' && airborne) ended = true;
+          else if (o.type === 'low' && slideT <= 0 && !airborne) { /* need slide, handled above by low check inverse */ }
+          o.hit = true;
+        }
+      });
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      const topY = 120 * dpr, roadTop = w * 0.28, roadBottom = w * 0.94;
+      ctx.fillStyle = PATH_COLOR;
+      ctx.beginPath();
+      ctx.moveTo(w / 2 - roadTop / 2, topY);
+      ctx.lineTo(w / 2 + roadTop / 2, topY);
+      ctx.lineTo(w / 2 + roadBottom / 2, h);
+      ctx.lineTo(w / 2 - roadBottom / 2, h);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(255,200,120,.12)';
+      ctx.lineWidth = 2 * dpr;
+      for (let d = 1; d < 3; d++) {
+        ctx.beginPath();
+        ctx.moveTo(w / 2 - roadTop / 2 + (roadTop / 3) * d, topY);
+        ctx.lineTo(w / 2 - roadBottom / 2 + (roadBottom / 3) * d, h);
+        ctx.stroke();
+      }
+
+      obstacles.forEach((o) => {
+        if (o.hit) return;
+        const x = laneX(o.lane, o.y);
+        if (o.type === 'rock') {
+          ctx.fillStyle = ROCK_COLOR;
+          ctx.beginPath();
+          ctx.roundRect(x - 32 * dpr, o.y - 32 * dpr, 64 * dpr, 64 * dpr, 10 * dpr);
+          ctx.fill();
+        } else if (o.type === 'gap') {
+          ctx.fillStyle = GAP_COLOR;
+          ctx.beginPath();
+          ctx.ellipse(x, o.y, 46 * dpr, 20 * dpr, 0, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (o.type === 'low') {
+          ctx.fillStyle = '#A1662F';
+          ctx.fillRect(x - 40 * dpr, o.y - 60 * dpr, 80 * dpr, 24 * dpr);
+        } else if (o.type === 'gem') {
+          ctx.fillStyle = GEM_COLOR;
+          ctx.save();
+          ctx.translate(x, o.y);
+          ctx.rotate(Math.PI / 4);
+          ctx.fillRect(-10 * dpr, -10 * dpr, 20 * dpr, 20 * dpr);
+          ctx.restore();
+        }
+      });
+
+      const px = laneX(lane, h * 0.72);
+      const lift = jumpT > 0 ? Math.sin(jumpT * Math.PI) * 100 * dpr : 0;
+      const py = h * 0.72 - lift - (slideT > 0 ? 16 * dpr : 0);
+      ctx.fillStyle = PLAYER_COLOR;
+      ctx.beginPath();
+      ctx.roundRect(px - 24 * dpr, py - (slideT > 0 ? 20 * dpr : 34 * dpr), 48 * dpr, slideT > 0 ? 24 * dpr : 68 * dpr, 10 * dpr);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 130 * dpr, h * 0.85, 260 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.font = '900 ' + (10 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('SWIPE TO DODGE & JUMP', w * 0.5, h * 0.85 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (26 * dpr) + 'px Arial';
+        ctx.fillText('TAP TO RUN', w / 2, h * 0.30);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = ROCK_COLOR;
+        ctx.font = '900 ' + (32 * dpr) + 'px Arial';
+        ctx.fillText('GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + (score + gems * 8), w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() {
+      if (started && !ended) step();
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('pointerup', (e) => pointerUp(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('touchend', (e) => { const t = e.changedTouches[0]; if (t) pointerUp(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('keydown', (e) => {
+      if (!started) start();
+      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') { e.preventDefault(); moveLeft(); }
+      if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') { e.preventDefault(); moveRight(); }
+      if (e.key === 'ArrowUp' || e.key === ' ' || e.key.toLowerCase() === 'w') { e.preventDefault(); doJump(); }
+      if (e.key === 'ArrowDown' || e.key.toLowerCase() === 's') { e.preventDefault(); doSlide(); }
+    });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER') {
+        if (data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      }
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

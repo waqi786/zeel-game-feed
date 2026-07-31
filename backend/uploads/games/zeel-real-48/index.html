@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Combo Fighters</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #1B0F14; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #1B0F14; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#1B0F14';
+    const P1_COLOR = '#00E5FF';
+    const P2_COLOR = '#FF3D57';
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true, won = false;
+    let p1 = {}, p2 = {}, score = 0, roundOverTimer = 0;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      draw();
+    }
+
+    function reset() {
+      p1 = { x: w * 0.28, hp: 100, attackCooldown: 0, hitFlash: 0 };
+      p2 = { x: w * 0.72, hp: 100, attackCooldown: 0, hitFlash: 0, aiTimer: 0 };
+      score = 0; ended = false; won = false;
+      scoreEl.textContent = score;
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (name === 'LEFT') p1.x -= 18 * dpr;
+      if (name === 'RIGHT') p1.x += 18 * dpr;
+      if (name === 'JUMP' || name === 'BOOST') attack();
+    }
+
+    function attack() {
+      if (p1.attackCooldown > 0 || ended) return;
+      p1.attackCooldown = 20;
+      const dist = Math.abs(p1.x - p2.x);
+      if (dist < 90 * dpr) {
+        const dmg = 8 + Math.random() * 6;
+        p2.hp -= dmg;
+        p2.hitFlash = 8;
+        score += Math.round(dmg);
+        scoreEl.textContent = score;
+        if (p2.hp <= 0) { ended = true; won = true; score += 40; scoreEl.textContent = score; }
+      }
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (x < w / 2) attack(); else p1.x = x;
+    }
+
+    function step() {
+      p1.x = Math.max(20 * dpr, Math.min(w - 20 * dpr, p1.x));
+      if (p1.attackCooldown > 0) p1.attackCooldown--;
+      if (p1.hitFlash > 0) p1.hitFlash--;
+      if (p2.hitFlash > 0) p2.hitFlash--;
+
+      p2.aiTimer--;
+      if (p2.aiTimer <= 0) {
+        p2.aiTimer = 30 + Math.random() * 30;
+        const dist = p1.x - p2.x;
+        if (Math.abs(dist) > 90 * dpr) p2.x += Math.sign(dist) * 10 * dpr;
+        else if (p2.attackCooldown <= 0) {
+          p2.attackCooldown = 26;
+          const dmg = 6 + Math.random() * 6;
+          p1.hp -= dmg;
+          p1.hitFlash = 8;
+          if (p1.hp <= 0) { ended = true; won = false; }
+        }
+      }
+      if (p2.attackCooldown > 0) p2.attackCooldown--;
+      p2.x = Math.max(20 * dpr, Math.min(w - 20 * dpr, p2.x));
+    }
+
+    function drawFighter(f, color, facing) {
+      ctx.save();
+      ctx.translate(f.x, h * 0.7);
+      if (f.hitFlash > 0) ctx.fillStyle = '#FFFFFF'; else ctx.fillStyle = color;
+      ctx.fillRect(-16 * dpr, -60 * dpr, 32 * dpr, 60 * dpr);
+      ctx.beginPath();
+      ctx.arc(0, -70 * dpr, 14 * dpr, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillRect(facing * 16 * dpr, -46 * dpr, facing * 22 * dpr, 10 * dpr);
+      ctx.restore();
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+      ctx.fillStyle = 'rgba(255,255,255,.08)';
+      ctx.fillRect(0, h * 0.72, w, 6 * dpr);
+
+      drawFighter(p1, P1_COLOR, p1.x < p2.x ? 1 : -1);
+      drawFighter(p2, P2_COLOR, p2.x < p1.x ? 1 : -1);
+
+      const barW = w * 0.4;
+      ctx.fillStyle = 'rgba(255,255,255,.15)';
+      ctx.fillRect(20 * dpr, 20 * dpr, barW, 16 * dpr);
+      ctx.fillRect(w - 20 * dpr - barW, 20 * dpr, barW, 16 * dpr);
+      ctx.fillStyle = P1_COLOR;
+      ctx.fillRect(20 * dpr, 20 * dpr, barW * Math.max(0, p1.hp) / 100, 16 * dpr);
+      ctx.fillStyle = P2_COLOR;
+      const p2w = barW * Math.max(0, p2.hp) / 100;
+      ctx.fillRect(w - 20 * dpr - p2w, 20 * dpr, p2w, 16 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (20 * dpr) + 'px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText('TAP LEFT TO PUNCH, RIGHT TO MOVE', w / 2, h * 0.5);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = won ? P1_COLOR : P2_COLOR;
+        ctx.font = '900 ' + (28 * dpr) + 'px Arial';
+        ctx.fillText(won ? 'YOU WIN!' : 'YOU LOSE', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to fight again', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() {
+      if (started && !ended) step();
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('keydown', (e) => {
+      if (!started) start();
+      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') control('LEFT');
+      if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') control('RIGHT');
+      if (e.key === ' ') { e.preventDefault(); attack(); }
+    });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

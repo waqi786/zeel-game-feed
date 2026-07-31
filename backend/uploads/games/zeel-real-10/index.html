@@ -1,0 +1,280 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Solo Chess</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #14110E; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #14110E; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#14110E';
+    const LIGHT = '#EDE0C8';
+    const DARK = '#7A5230';
+    const WHITE_COLOR = '#FFFFFF';
+    const BLACK_COLOR = '#2A2A2A';
+    const HILITE = 'rgba(0,229,255,.45)';
+    const MOVE_HINT = 'rgba(0,230,118,.55)';
+
+    let dpr = 1, w = 0, h = 0, cell = 0, boardLeft = 0, boardTop = 0;
+    let board, turn, selected, score, started = false, ended = false, muted = true, message = '';
+
+    const PIECES = {
+      p: { symbol: '♟', value: 1 }, r: { symbol: '♜', value: 5 }, n: { symbol: '♞', value: 3 },
+      b: { symbol: '♝', value: 3 }, q: { symbol: '♛', value: 9 }, k: { symbol: '♚', value: 0 }
+    };
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      cell = Math.floor((w - 40 * dpr) / 8);
+      boardLeft = (w - cell * 8) / 2;
+      boardTop = h * 0.22;
+      draw();
+    }
+
+    function initialBoard() {
+      const back = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
+      const b = [];
+      b.push(back.map((t) => ({ type: t, color: 'b' })));
+      b.push(Array(8).fill(0).map(() => ({ type: 'p', color: 'b' })));
+      for (let i = 0; i < 4; i++) b.push(Array(8).fill(null));
+      b.push(Array(8).fill(0).map(() => ({ type: 'p', color: 'w' })));
+      b.push(back.map((t) => ({ type: t, color: 'w' })));
+      return b;
+    }
+
+    function reset() {
+      board = initialBoard();
+      turn = 'w';
+      selected = null;
+      score = 0;
+      ended = false;
+      message = '';
+      scoreEl.textContent = score;
+    }
+
+    function start() {
+      hud.style.display = 'flex';
+      started = true;
+      raf = requestAnimationFrame(loop);
+    }
+
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) start();
+    }
+
+    function cellAt(x, y) {
+      const c = Math.floor((x - boardLeft) / cell);
+      const r = Math.floor((y - boardTop) / cell);
+      if (c < 0 || c >= 8 || r < 0 || r >= 8) return null;
+      return { r, c };
+    }
+
+    function pieceMoves(r, c) {
+      const piece = board[r][c];
+      if (!piece) return [];
+      const moves = [];
+      const dir = piece.color === 'w' ? -1 : 1;
+      const inBounds = (rr, cc) => rr >= 0 && rr < 8 && cc >= 0 && cc < 8;
+      const enemy = (rr, cc) => board[rr][cc] && board[rr][cc].color !== piece.color;
+      const empty = (rr, cc) => !board[rr][cc];
+
+      if (piece.type === 'p') {
+        if (inBounds(r + dir, c) && empty(r + dir, c)) {
+          moves.push({ r: r + dir, c });
+          const startRow = piece.color === 'w' ? 6 : 1;
+          if (r === startRow && empty(r + dir * 2, c)) moves.push({ r: r + dir * 2, c });
+        }
+        [c - 1, c + 1].forEach((cc) => {
+          if (inBounds(r + dir, cc) && enemy(r + dir, cc)) moves.push({ r: r + dir, c: cc });
+        });
+      } else if (piece.type === 'n') {
+        const deltas = [[1,2],[2,1],[-1,2],[-2,1],[1,-2],[2,-1],[-1,-2],[-2,-1]];
+        deltas.forEach(([dr, dc]) => {
+          const rr = r + dr, cc = c + dc;
+          if (inBounds(rr, cc) && (empty(rr, cc) || enemy(rr, cc))) moves.push({ r: rr, c: cc });
+        });
+      } else if (piece.type === 'k') {
+        for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+          if (!dr && !dc) continue;
+          const rr = r + dr, cc = c + dc;
+          if (inBounds(rr, cc) && (empty(rr, cc) || enemy(rr, cc))) moves.push({ r: rr, c: cc });
+        }
+      } else {
+        const dirs = piece.type === 'r' ? [[1,0],[-1,0],[0,1],[0,-1]]
+          : piece.type === 'b' ? [[1,1],[1,-1],[-1,1],[-1,-1]]
+          : [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+        dirs.forEach(([dr, dc]) => {
+          let rr = r + dr, cc = c + dc;
+          while (inBounds(rr, cc)) {
+            if (empty(rr, cc)) { moves.push({ r: rr, c: cc }); }
+            else { if (enemy(rr, cc)) moves.push({ r: rr, c: cc }); break; }
+            rr += dr; cc += dc;
+          }
+        });
+      }
+      return moves;
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (turn !== 'w') return;
+      const cellPos = cellAt(x, y);
+      if (!cellPos) return;
+      const { r, c } = cellPos;
+      const piece = board[r][c];
+      if (selected) {
+        const moves = pieceMoves(selected.r, selected.c);
+        const valid = moves.some((m) => m.r === r && m.c === c);
+        if (valid) {
+          movePiece(selected, { r, c });
+          selected = null;
+          turn = 'b';
+          setTimeout(aiMove, 400);
+        } else if (piece && piece.color === 'w') {
+          selected = { r, c };
+        } else {
+          selected = null;
+        }
+      } else if (piece && piece.color === 'w') {
+        selected = { r, c };
+      }
+    }
+
+    function movePiece(from, to) {
+      const target = board[to.r][to.c];
+      if (target) score += PIECES[target.type].value * 10;
+      scoreEl.textContent = score;
+      board[to.r][to.c] = board[from.r][from.c];
+      board[from.r][from.c] = null;
+      if (target && target.type === 'k') { ended = true; message = 'You Win!'; }
+      if (board[to.r][to.c].type === 'p' && (to.r === 0 || to.r === 7)) board[to.r][to.c].type = 'q';
+    }
+
+    function aiMove() {
+      if (ended) return;
+      const allMoves = [];
+      for (let r = 0; r < 8; r++) for (let c = 0; c < 8; c++) {
+        const piece = board[r][c];
+        if (piece && piece.color === 'b') {
+          pieceMoves(r, c).forEach((m) => allMoves.push({ from: { r, c }, to: m }));
+        }
+      }
+      if (!allMoves.length) { ended = true; message = 'Stalemate'; return; }
+      let best = allMoves[0], bestScore = -1;
+      allMoves.forEach((mv) => {
+        const target = board[mv.to.r][mv.to.c];
+        const val = target ? PIECES[target.type].value : 0;
+        if (val > bestScore || (val === bestScore && Math.random() < 0.3)) { bestScore = val; best = mv; }
+      });
+      const target = board[best.to.r][best.to.c];
+      board[best.to.r][best.to.c] = board[best.from.r][best.from.c];
+      board[best.from.r][best.from.c] = null;
+      if (target && target.type === 'k') { ended = true; message = 'You Lose'; }
+      turn = 'w';
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const x = boardLeft + c * cell, y = boardTop + r * cell;
+          ctx.fillStyle = (r + c) % 2 === 0 ? LIGHT : DARK;
+          ctx.fillRect(x, y, cell, cell);
+          if (selected && selected.r === r && selected.c === c) {
+            ctx.fillStyle = HILITE;
+            ctx.fillRect(x, y, cell, cell);
+          }
+        }
+      }
+
+      if (selected) {
+        pieceMoves(selected.r, selected.c).forEach((m) => {
+          const x = boardLeft + m.c * cell, y = boardTop + m.r * cell;
+          ctx.fillStyle = MOVE_HINT;
+          ctx.beginPath();
+          ctx.arc(x + cell / 2, y + cell / 2, cell * 0.14, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      for (let r = 0; r < 8; r++) {
+        for (let c = 0; c < 8; c++) {
+          const piece = board[r][c];
+          if (!piece) continue;
+          const x = boardLeft + c * cell, y = boardTop + r * cell;
+          ctx.fillStyle = piece.color === 'w' ? WHITE_COLOR : BLACK_COLOR;
+          ctx.font = '900 ' + Math.floor(cell * 0.62) + 'px Arial';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(PIECES[piece.type].symbol, x + cell / 2, y + cell / 2 + 2 * dpr);
+        }
+      }
+      ctx.textBaseline = 'alphabetic';
+
+      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 130 * dpr, h * 0.12, 260 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.font = '900 ' + (11 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(turn === 'w' ? 'YOUR TURN - TAP TO MOVE' : "OPPONENT'S TURN", w * 0.5, h * 0.12 + 20 * dpr);
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#00E5FF';
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText(message || 'GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() { draw(); raf = requestAnimationFrame(loop); }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Air Hockey</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0B1220; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #0B1220; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#0B1220';
+    const TABLE_COLOR = '#122038';
+    const PLAYER_COLOR = '#5B8DEF';
+    const CPU_COLOR = '#FF3D57';
+    const PUCK_COLOR = '#FFC93C';
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true;
+    let px = 0, py = 0, cx = 0, cy = 0, pux = 0, puy = 0, puvx = 0, puvy = 0;
+    let playerScore = 0, cpuScore = 0, mallet = 34;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      px = w / 2; py = h * 0.82;
+      cx = w / 2; cy = h * 0.18;
+      draw();
+    }
+
+    function reset() {
+      playerScore = 0; cpuScore = 0; ended = false;
+      scoreEl.textContent = playerScore;
+      servePuck();
+    }
+
+    function servePuck() {
+      pux = w / 2; puy = h / 2;
+      const angle = Math.random() * Math.PI * 2;
+      puvx = Math.cos(angle) * 3 * dpr;
+      puvy = Math.sin(angle) * 3 * dpr;
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (name === 'LEFT') px -= 30 * dpr;
+      if (name === 'RIGHT') px += 30 * dpr;
+    }
+
+    function pointerMove(x, y) {
+      if (!started || ended) return;
+      px = x; py = Math.max(h * 0.55, Math.min(h - mallet * dpr, y));
+    }
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      pointerMove(x, y);
+    }
+
+    function step() {
+      px = Math.max(mallet * dpr, Math.min(w - mallet * dpr, px));
+
+      const cpuTargetX = pux;
+      cx += (cpuTargetX - cx) * 0.07;
+      cx = Math.max(mallet * dpr, Math.min(w - mallet * dpr, cx));
+      cy = h * 0.18;
+
+      pux += puvx; puy += puvy;
+      puvx *= 0.998; puvy *= 0.998;
+
+      if (pux < 16 * dpr) { pux = 16 * dpr; puvx *= -1; }
+      if (pux > w - 16 * dpr) { pux = w - 16 * dpr; puvx *= -1; }
+
+      const dPlayer = Math.hypot(pux - px, puy - py);
+      if (dPlayer < mallet * dpr + 14 * dpr) {
+        const ang = Math.atan2(puy - py, pux - px);
+        const speed = Math.max(6 * dpr, Math.hypot(puvx, puvy) * 1.15);
+        puvx = Math.cos(ang) * speed; puvy = Math.sin(ang) * speed;
+      }
+      const dCpu = Math.hypot(pux - cx, puy - cy);
+      if (dCpu < mallet * dpr + 14 * dpr) {
+        const ang = Math.atan2(puy - cy, pux - cx);
+        const speed = Math.max(6 * dpr, Math.hypot(puvx, puvy) * 1.1);
+        puvx = Math.cos(ang) * speed; puvy = Math.sin(ang) * speed;
+      }
+
+      if (puy < 0) { playerScore++; scoreEl.textContent = playerScore; if (playerScore >= 7) ended = true; else servePuck(); }
+      if (puy > h) { cpuScore++; if (cpuScore >= 7) ended = true; else servePuck(); }
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.fillStyle = TABLE_COLOR;
+      ctx.fillRect(20 * dpr, 20 * dpr, w - 40 * dpr, h - 40 * dpr);
+
+      ctx.strokeStyle = 'rgba(255,255,255,.14)';
+      ctx.lineWidth = 3 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(20 * dpr, h / 2); ctx.lineTo(w - 20 * dpr, h / 2); ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(w / 2, h / 2, 60 * dpr, 0, Math.PI * 2); ctx.stroke();
+
+      ctx.fillStyle = CPU_COLOR;
+      ctx.beginPath(); ctx.arc(cx, cy, mallet * dpr, 0, Math.PI * 2); ctx.fill();
+
+      ctx.fillStyle = PLAYER_COLOR;
+      ctx.beginPath(); ctx.arc(px, py, mallet * dpr, 0, Math.PI * 2); ctx.fill();
+
+      ctx.fillStyle = PUCK_COLOR;
+      ctx.beginPath(); ctx.arc(pux, puy, 15 * dpr, 0, Math.PI * 2); ctx.fill();
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 100 * dpr, 6 * dpr, 200 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 ' + (14 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(playerScore + ' - ' + cpuScore, w * 0.5, 6 * dpr + 21 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (24 * dpr) + 'px Arial';
+        ctx.fillText('DRAG MALLET TO PLAY', w / 2, h * 0.45);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = playerScore > cpuScore ? '#00C48C' : '#FF3D57';
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText(playerScore > cpuScore ? 'YOU WIN!' : 'CPU WINS', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + playerScore, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() {
+      if (started && !ended) step();
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('pointermove', (e) => { if (e.buttons) pointerMove(e.clientX * dpr, e.clientY * dpr); });
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('touchmove', (e) => { const t = e.touches[0]; if (t) pointerMove(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER') {
+        if (data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+        else pointerMove(Number(data.x) * dpr, Number(data.y) * dpr);
+      }
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

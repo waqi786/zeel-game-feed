@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Whack Attack</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #142013; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #142013; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#142013';
+    const HOLE_COLOR = '#2A3A28';
+    const MOLE_COLOR = '#8B5A2B';
+    const BOMB_COLOR = '#2A2A2A';
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true;
+    let holes = [], score = 0, timeLeft = 30, tick = 0, spawnTimer = 0;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      layoutHoles();
+      draw();
+    }
+
+    function layoutHoles() {
+      holes = [];
+      const cols = 3, rows = 3;
+      const cellW = w / cols, cellH = (h * 0.6) / rows;
+      const top = h * 0.28;
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          holes.push({ x: cellW * c + cellW / 2, y: top + cellH * r + cellH / 2, up: 0, isBomb: false, hit: false });
+        }
+      }
+    }
+
+    function reset() {
+      score = 0; ended = false; timeLeft = 30; tick = 0; spawnTimer = 0;
+      scoreEl.textContent = score;
+      layoutHoles();
+    }
+
+    function start() {
+      hud.style.display = 'flex';
+      started = true;
+      raf = requestAnimationFrame(loop);
+    }
+
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) start();
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      holes.forEach((hl) => {
+        if (hl.up > 0.5 && !hl.hit) {
+          const d = Math.hypot(hl.x - x, hl.y - y);
+          if (d < 60 * dpr) {
+            hl.hit = true;
+            hl.up = 0;
+            if (hl.isBomb) { score = Math.max(0, score - 20); }
+            else { score += 10; }
+            scoreEl.textContent = score;
+          }
+        }
+      });
+    }
+
+    function step(dt) {
+      tick++;
+      timeLeft -= dt;
+      if (timeLeft <= 0) { timeLeft = 0; ended = true; }
+      spawnTimer -= dt;
+      if (spawnTimer <= 0) {
+        spawnTimer = Math.max(0.45, 1.1 - score * 0.003);
+        const avail = holes.filter((hl) => hl.up <= 0);
+        if (avail.length) {
+          const hl = avail[Math.floor(Math.random() * avail.length)];
+          hl.up = 1; hl.hit = false; hl.isBomb = Math.random() < 0.2;
+          hl.life = 0.9 + Math.random() * 0.5;
+        }
+      }
+      holes.forEach((hl) => {
+        if (hl.up > 0) {
+          hl.life -= dt;
+          if (hl.life <= 0) hl.up = 0;
+        }
+      });
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      holes.forEach((hl) => {
+        ctx.fillStyle = HOLE_COLOR;
+        ctx.beginPath();
+        ctx.ellipse(hl.x, hl.y + 30 * dpr, 55 * dpr, 22 * dpr, 0, 0, Math.PI * 2);
+        ctx.fill();
+        if (hl.up > 0) {
+          const lift = Math.min(1, hl.up) * 40 * dpr;
+          ctx.fillStyle = hl.hit ? 'rgba(255,255,255,.3)' : (hl.isBomb ? BOMB_COLOR : MOLE_COLOR);
+          ctx.beginPath();
+          ctx.arc(hl.x, hl.y + 30 * dpr - lift, 34 * dpr, 0, Math.PI * 2);
+          ctx.fill();
+          if (!hl.hit) {
+            ctx.fillStyle = '#FFFFFF';
+            ctx.beginPath();
+            ctx.arc(hl.x - 10 * dpr, hl.y + 20 * dpr - lift, 5 * dpr, 0, Math.PI * 2);
+            ctx.arc(hl.x + 10 * dpr, hl.y + 20 * dpr - lift, 5 * dpr, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      });
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 120 * dpr, h * 0.14, 240 * dpr, 34 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = '#FFC93C';
+      ctx.font = '900 ' + (16 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('TIME: ' + Math.ceil(timeLeft), w * 0.5, h * 0.14 + 23 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (26 * dpr) + 'px Arial';
+        ctx.fillText('TAP MOLES TO SCORE', w / 2, h * 0.30);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = MOLE_COLOR;
+        ctx.font = '900 ' + (32 * dpr) + 'px Arial';
+        ctx.fillText('TIME UP!', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0, lastT = 0;
+    function loop(t) {
+      const dt = lastT ? Math.min(0.05, (t - lastT) / 1000) : 0;
+      lastT = t;
+      if (started && !ended) step(dt);
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

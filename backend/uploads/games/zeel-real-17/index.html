@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Tic Tac Toe</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #14181F; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #14181F; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#14181F';
+    const GRID_COLOR = 'rgba(255,255,255,.16)';
+    const X_COLOR = '#5B8DEF';
+    const O_COLOR = '#FF3D57';
+
+    let dpr = 1, w = 0, h = 0, cellSize = 0, boardLeft = 0, boardTop = 0;
+    let cells = Array(9).fill(0), turn = 1, score = 0, started = false, ended = false, muted = true, message = '';
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      cellSize = Math.floor((w - 60 * dpr) / 3);
+      boardLeft = (w - cellSize * 3) / 2;
+      boardTop = h * 0.30;
+      draw();
+    }
+
+    function reset() {
+      cells = Array(9).fill(0); turn = 1; score = 0; ended = false; message = '';
+      scoreEl.textContent = score;
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) { if (ended) { reset(); return; } if (!started) start(); }
+
+    const LINES = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+    function winner(bd) {
+      for (const [a,b,c] of LINES) if (bd[a] && bd[a] === bd[b] && bd[b] === bd[c]) return bd[a];
+      return 0;
+    }
+
+    function cellAt(x, y) {
+      const c = Math.floor((x - boardLeft) / cellSize);
+      const r = Math.floor((y - boardTop) / cellSize);
+      if (c < 0 || c > 2 || r < 0 || r > 2) return -1;
+      return r * 3 + c;
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (turn !== 1) return;
+      const idx = cellAt(x, y);
+      if (idx < 0 || cells[idx]) return;
+      cells[idx] = 1;
+      let win = winner(cells);
+      if (win) { ended = true; message = 'YOU WIN!'; score = 100; scoreEl.textContent = score; return; }
+      if (cells.every((v) => v)) { ended = true; message = 'DRAW'; return; }
+      turn = 2;
+      setTimeout(aiMove, 400);
+    }
+
+    function aiMove() {
+      if (ended) return;
+      const empty = cells.map((v, i) => v === 0 ? i : -1).filter((i) => i >= 0);
+      let best = empty[Math.floor(Math.random() * empty.length)];
+      for (const i of empty) { cells[i] = 2; if (winner(cells) === 2) { best = i; cells[i] = 0; break; } cells[i] = 0; }
+      for (const i of empty) { cells[i] = 1; if (winner(cells) === 1) { best = i; cells[i] = 0; break; } cells[i] = 0; }
+      cells[best] = 2;
+      let win = winner(cells);
+      if (win) { ended = true; message = 'CPU WINS'; turn = 1; return; }
+      if (cells.every((v) => v)) { ended = true; message = 'DRAW'; return; }
+      turn = 1;
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.strokeStyle = GRID_COLOR;
+      ctx.lineWidth = 4 * dpr;
+      for (let i = 1; i < 3; i++) {
+        ctx.beginPath(); ctx.moveTo(boardLeft + i * cellSize, boardTop); ctx.lineTo(boardLeft + i * cellSize, boardTop + cellSize * 3); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(boardLeft, boardTop + i * cellSize); ctx.lineTo(boardLeft + cellSize * 3, boardTop + i * cellSize); ctx.stroke();
+      }
+
+      cells.forEach((v, i) => {
+        if (!v) return;
+        const r = Math.floor(i / 3), c = i % 3;
+        const cx = boardLeft + c * cellSize + cellSize / 2, cy = boardTop + r * cellSize + cellSize / 2;
+        const sz = cellSize * 0.32;
+        ctx.lineWidth = 8 * dpr;
+        ctx.lineCap = 'round';
+        if (v === 1) {
+          ctx.strokeStyle = X_COLOR;
+          ctx.beginPath(); ctx.moveTo(cx - sz, cy - sz); ctx.lineTo(cx + sz, cy + sz); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(cx + sz, cy - sz); ctx.lineTo(cx - sz, cy + sz); ctx.stroke();
+        } else {
+          ctx.strokeStyle = O_COLOR;
+          ctx.beginPath(); ctx.arc(cx, cy, sz, 0, Math.PI * 2); ctx.stroke();
+        }
+      });
+
+      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 130 * dpr, h * 0.16, 260 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = turn === 1 ? X_COLOR : O_COLOR;
+      ctx.font = '900 ' + (12 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText(turn === 1 ? 'YOUR TURN (X)' : "CPU'S TURN (O)", w * 0.5, h * 0.16 + 20 * dpr);
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = X_COLOR;
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText(message || 'GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to play again', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() { draw(); raf = requestAnimationFrame(loop); }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

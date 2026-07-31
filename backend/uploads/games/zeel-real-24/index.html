@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Hoop Shots</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #1A1006; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #1A1006; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#1A1006';
+    const HOOP_COLOR = '#FF7043';
+    const BALL_COLOR = '#FFA733';
+    const NET_COLOR = 'rgba(255,255,255,.5)';
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true;
+    let ballX = 0, ballY = 0, ballVX = 0, ballVY = 0, dragging = false, aiming = false;
+    let startX = 0, startY = 0, score = 0, shotsLeft = 12, hoopX = 0, hoopY = 0, hoopDir = 1, inFlight = false;
+    const GRAVITY = 0.5;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      resetBall();
+      hoopY = h * 0.22;
+      hoopX = w / 2;
+      draw();
+    }
+
+    function resetBall() {
+      ballX = w / 2; ballY = h - 140 * dpr; ballVX = 0; ballVY = 0; inFlight = false;
+    }
+
+    function reset() {
+      score = 0; shotsLeft = 12; ended = false;
+      scoreEl.textContent = score;
+      resetBall();
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (!inFlight) { ballVX = 0; ballVY = -20 * dpr; inFlight = true; shotsLeft--; }
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (inFlight) return;
+      startX = x; startY = y; dragging = true;
+    }
+    function pointerUp(x, y) {
+      if (!dragging) return;
+      dragging = false;
+      const dx = startX - x, dy = startY - y;
+      if (dy <= 10 * dpr) return;
+      ballVX = dx * 0.09;
+      ballVY = dy * 0.16 * -1;
+      inFlight = true;
+      shotsLeft--;
+    }
+
+    function step() {
+      hoopX += hoopDir * 1.1 * dpr;
+      if (hoopX > w - 80 * dpr || hoopX < 80 * dpr) hoopDir *= -1;
+
+      if (inFlight) {
+        ballVY += GRAVITY * dpr;
+        ballX += ballVX;
+        ballY += ballVY;
+
+        if (Math.abs(ballX - hoopX) < 26 * dpr && Math.abs(ballY - hoopY) < 20 * dpr && ballVY > 0) {
+          score += 10;
+          scoreEl.textContent = score;
+          inFlight = false;
+          resetBall();
+          if (shotsLeft <= 0) ended = true;
+          return;
+        }
+        if (ballX < 10 * dpr || ballX > w - 10 * dpr) ballVX *= -0.6;
+        if (ballY > h + 60 * dpr) {
+          inFlight = false;
+          resetBall();
+          if (shotsLeft <= 0) ended = true;
+        }
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.strokeStyle = HOOP_COLOR;
+      ctx.lineWidth = 6 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(hoopX - 34 * dpr, hoopY); ctx.lineTo(hoopX + 34 * dpr, hoopY);
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,.15)';
+      ctx.fillRect(hoopX + 34 * dpr, hoopY - 40 * dpr, 8 * dpr, 60 * dpr);
+      ctx.strokeStyle = NET_COLOR;
+      ctx.lineWidth = 2 * dpr;
+      for (let i = -2; i <= 2; i++) {
+        ctx.beginPath();
+        ctx.moveTo(hoopX + i * 12 * dpr, hoopY);
+        ctx.lineTo(hoopX + i * 8 * dpr, hoopY + 34 * dpr);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = BALL_COLOR;
+      ctx.beginPath();
+      ctx.arc(ballX, ballY, 18 * dpr, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (dragging) {
+        ctx.strokeStyle = 'rgba(255,255,255,.5)';
+        ctx.lineWidth = 3 * dpr;
+        ctx.setLineDash([6 * dpr, 6 * dpr]);
+        ctx.beginPath();
+        ctx.moveTo(ballX, ballY);
+        ctx.lineTo(ballX, ballY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 130 * dpr, h * 0.85, 260 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 ' + (12 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('SHOTS LEFT: ' + Math.max(0, shotsLeft), w * 0.5, h * 0.85 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (22 * dpr) + 'px Arial';
+        ctx.fillText('SWIPE UP TO SHOOT', w / 2, h * 0.45);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = HOOP_COLOR;
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText('GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() {
+      if (started && !ended) step();
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('pointerup', (e) => pointerUp(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('touchend', (e) => { const t = e.changedTouches[0]; if (t) pointerUp(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

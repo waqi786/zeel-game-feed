@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env.local
+.DS_Store
+backend/dev.db
+backend/dev.db-journal
+backend/uploads/games/*
+backend/uploads/thumbnails/*
+!backend/uploads/games/.gitkeep
+!backend/uploads/thumbnails/.gitkeep
+!backend/uploads/games/zeel-real-*
+frontend/dist/
+frontend/test-results/
+frontend/playwright-report/

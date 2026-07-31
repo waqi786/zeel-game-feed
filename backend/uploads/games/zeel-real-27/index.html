@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Stack Tower</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0E1420; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #0E1420; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#0E1420';
+    const COLORS = ['#5B8DEF', '#00C48C', '#FFC93C', '#FF7043', '#B85CFF', '#00E5FF'];
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true;
+    let stack = [], current = null, camY = 0, score = 0, blockH = 34;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      blockH = 34 * dpr;
+      draw();
+    }
+
+    function reset() {
+      const baseW = w * 0.6;
+      stack = [{ x: w / 2 - baseW / 2, w: baseW, y: h - blockH, color: COLORS[0] }];
+      camY = 0; score = 0; ended = false;
+      scoreEl.textContent = score;
+      spawnNext();
+    }
+
+    function spawnNext() {
+      const last = stack[stack.length - 1];
+      const dir = Math.random() < 0.5 ? -1 : 1;
+      current = {
+        x: dir < 0 ? -last.w : w,
+        w: last.w,
+        y: last.y - blockH,
+        speed: (3 + stack.length * 0.15) * dpr * dir,
+        color: COLORS[stack.length % COLORS.length],
+      };
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) { if (ended) { reset(); return; } if (!started) { start(); return; } dropBlock(); }
+    function pointerDown() { if (ended) { reset(); return; } if (!started) { start(); return; } dropBlock(); }
+
+    function dropBlock() {
+      if (!current) return;
+      const last = stack[stack.length - 1];
+      const overlapStart = Math.max(last.x, current.x);
+      const overlapEnd = Math.min(last.x + last.w, current.x + current.w);
+      const overlapW = overlapEnd - overlapStart;
+      if (overlapW <= 4 * dpr) { ended = true; return; }
+      stack.push({ x: overlapStart, w: overlapW, y: current.y, color: current.color });
+      score += 10;
+      scoreEl.textContent = score;
+      if (stack.length > 8) camY += blockH;
+      spawnNext();
+    }
+
+    function step() {
+      if (!current) return;
+      current.x += current.speed;
+      if (current.x <= 0 || current.x + current.w >= w) current.speed *= -1;
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.save();
+      ctx.translate(0, camY);
+      stack.forEach((b) => {
+        ctx.fillStyle = b.color;
+        ctx.fillRect(b.x, b.y, b.w, blockH - 2 * dpr);
+      });
+      if (current) {
+        ctx.fillStyle = current.color;
+        ctx.fillRect(current.x, current.y, current.w, blockH - 2 * dpr);
+      }
+      ctx.restore();
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 90 * dpr, h * 0.08, 180 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 ' + (14 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('HEIGHT: ' + stack.length, w * 0.5, h * 0.08 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (24 * dpr) + 'px Arial';
+        ctx.fillText('TAP TO DROP BLOCKS', w / 2, h * 0.30);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = COLORS[0];
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText('TOWER FELL!', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() {
+      if (started && !ended) step();
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', pointerDown);
+    addEventListener('touchstart', (e) => { pointerDown(); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown();
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Flappy Wing</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0E1A2B; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #0E1A2B; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const SKY = '#0E1A2B';
+    const BIRD_COLOR = '#FFC93C';
+    const PIPE_COLOR = '#00C48C';
+    const GROUND_COLOR = '#3E2723';
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true;
+    let birdY = 0, birdV = 0, score = 0, pipes = [], tick = 0;
+    const GRAVITY = 0.5, FLAP = -9.5, PIPE_GAP = 220, PIPE_W = 76, PIPE_SPEED = 3.6;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      draw();
+    }
+
+    function reset() {
+      birdY = h * 0.42;
+      birdV = 0;
+      score = 0;
+      ended = false;
+      tick = 0;
+      scoreEl.textContent = score;
+      pipes = [];
+      for (let i = 0; i < 3; i++) spawnPipe(w + i * 320 * dpr);
+    }
+
+    function spawnPipe(x) {
+      const gapY = 160 * dpr + Math.random() * (h - 420 * dpr);
+      pipes.push({ x, gapY, passed: false });
+    }
+
+    function start() {
+      hud.style.display = 'flex';
+      started = true;
+      raf = requestAnimationFrame(loop);
+    }
+
+    function flap() {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      birdV = FLAP * dpr;
+      if (!muted && 'vibrate' in navigator) navigator.vibrate(6);
+    }
+
+    function control(name) {
+      if (name === 'JUMP' || name === 'BOOST') flap();
+      if (name === 'LEFT' || name === 'RIGHT') flap();
+    }
+
+    function step() {
+      tick++;
+      birdV += GRAVITY * dpr;
+      birdY += birdV;
+      const birdX = w * 0.30;
+      const birdR = 22 * dpr;
+
+      if (birdY - birdR < 0) { birdY = birdR; birdV = 0; }
+      if (birdY + birdR > h - 110 * dpr) { ended = true; birdY = h - 110 * dpr - birdR; }
+
+      pipes.forEach((p) => {
+        p.x -= PIPE_SPEED * dpr;
+        const gapHalf = (PIPE_GAP * dpr) / 2;
+        if (!p.passed && p.x + PIPE_W * dpr < birdX) { p.passed = true; score += 1; scoreEl.textContent = score; }
+        const inX = birdX + birdR > p.x && birdX - birdR < p.x + PIPE_W * dpr;
+        const inGap = birdY - birdR > p.gapY - gapHalf && birdY + birdR < p.gapY + gapHalf;
+        if (inX && !inGap) ended = true;
+      });
+      if (pipes.length && pipes[0].x < -PIPE_W * dpr) {
+        pipes.shift();
+        spawnPipe(pipes[pipes.length - 1].x + 320 * dpr);
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = SKY;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.fillStyle = 'rgba(255,255,255,.06)';
+      for (let i = 0; i < 6; i++) {
+        const x = ((i * 220 * dpr - tick * 0.6) % (w + 200 * dpr) + w + 200 * dpr) % (w + 200 * dpr) - 100 * dpr;
+        ctx.beginPath();
+        ctx.arc(x, 120 * dpr + (i % 3) * 60 * dpr, 50 * dpr, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      const gapHalf = (PIPE_GAP * dpr) / 2;
+      pipes.forEach((p) => {
+        ctx.fillStyle = PIPE_COLOR;
+        ctx.fillRect(p.x, 0, PIPE_W * dpr, p.gapY - gapHalf);
+        ctx.fillRect(p.x, p.gapY + gapHalf, PIPE_W * dpr, h - (p.gapY + gapHalf));
+        ctx.fillStyle = '#00A876';
+        ctx.fillRect(p.x - 4 * dpr, p.gapY - gapHalf - 20 * dpr, PIPE_W * dpr + 8 * dpr, 20 * dpr);
+        ctx.fillRect(p.x - 4 * dpr, p.gapY + gapHalf, PIPE_W * dpr + 8 * dpr, 20 * dpr);
+      });
+
+      ctx.fillStyle = GROUND_COLOR;
+      ctx.fillRect(0, h - 110 * dpr, w, 110 * dpr);
+
+      const birdX = w * 0.30;
+      ctx.save();
+      ctx.translate(birdX, birdY);
+      ctx.rotate(Math.max(-0.5, Math.min(0.9, birdV * 0.04)));
+      ctx.fillStyle = BIRD_COLOR;
+      ctx.beginPath();
+      ctx.arc(0, 0, 22 * dpr, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath();
+      ctx.arc(8 * dpr, -6 * dpr, 6 * dpr, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#FF7043';
+      ctx.beginPath();
+      ctx.moveTo(18 * dpr, 0);
+      ctx.lineTo(34 * dpr, -4 * dpr);
+      ctx.lineTo(34 * dpr, 6 * dpr);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 110 * dpr, h * 0.85, 220 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.font = '900 ' + (11 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('TAP TO FLAP', w * 0.5, h * 0.85 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (28 * dpr) + 'px Arial';
+        ctx.fillText('TAP TO START', w / 2, h * 0.30);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = PIPE_COLOR;
+        ctx.font = '900 ' + (32 * dpr) + 'px Arial';
+        ctx.fillText('GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() {
+      if (started && !ended) step();
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', flap);
+    addEventListener('touchstart', (e) => { flap(); }, { passive: true });
+    addEventListener('keydown', (e) => {
+      if (e.key === ' ' || e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') { e.preventDefault(); flap(); }
+    });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') flap();
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

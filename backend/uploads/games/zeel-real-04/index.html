@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Fruit Slice</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #101010; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #101010; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#101010';
+    const FRUIT_COLORS = ['#FF3D57', '#FFC93C', '#00C48C', '#5B8DEF', '#FF7043'];
+    const BOMB_COLOR = '#3A3A3A';
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true, tick = 0;
+    let items = [], trail = [], score = 0, lives = 3, spawnTimer = 0;
+    const GRAVITY = 0.28;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      draw();
+    }
+
+    function reset() {
+      items = []; trail = []; score = 0; lives = 3; ended = false; spawnTimer = 0;
+      scoreEl.textContent = score;
+    }
+
+    function start() {
+      hud.style.display = 'flex';
+      started = true;
+      raf = requestAnimationFrame(loop);
+    }
+
+    function spawnItem() {
+      const isBomb = Math.random() < 0.14;
+      const x = w * 0.15 + Math.random() * w * 0.7;
+      const vy = -(15 + Math.random() * 4) * dpr;
+      const vx = (Math.random() - 0.5) * 6 * dpr;
+      items.push({
+        x, y: h + 40 * dpr, vx, vy,
+        r: (26 + Math.random() * 12) * dpr,
+        color: isBomb ? BOMB_COLOR : FRUIT_COLORS[Math.floor(Math.random() * FRUIT_COLORS.length)],
+        bomb: isBomb, sliced: false, rot: Math.random() * Math.PI
+      });
+    }
+
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) start();
+    }
+
+    function addTrailPoint(x, y) {
+      trail.push({ x, y, life: 1 });
+      if (trail.length > 18) trail.shift();
+      checkSlice(x, y);
+    }
+
+    function checkSlice(x, y) {
+      items.forEach((item) => {
+        if (item.sliced) return;
+        const d = Math.hypot(item.x - x, item.y - y);
+        if (d < item.r + 14 * dpr) {
+          item.sliced = true;
+          if (item.bomb) {
+            lives = 0; ended = true;
+          } else {
+            score += 10;
+            scoreEl.textContent = score;
+          }
+        }
+      });
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      addTrailPoint(x, y);
+    }
+    function pointerMove(x, y) {
+      if (!started || ended) return;
+      addTrailPoint(x, y);
+    }
+
+    function step() {
+      tick++;
+      spawnTimer--;
+      if (spawnTimer <= 0) {
+        spawnItem();
+        spawnTimer = 42 - Math.min(24, Math.floor(score / 8));
+      }
+      items.forEach((item) => {
+        item.vy += GRAVITY * dpr;
+        item.x += item.vx;
+        item.y += item.vy;
+        item.rot += 0.05;
+      });
+      items = items.filter((item) => {
+        if (item.y > h + 100 * dpr) {
+          if (!item.sliced && !item.bomb) { lives -= 1; if (lives <= 0) ended = true; }
+          return false;
+        }
+        return true;
+      });
+      trail.forEach((t) => t.life -= 0.06);
+      trail = trail.filter((t) => t.life > 0);
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      if (trail.length > 1) {
+        ctx.strokeStyle = 'rgba(255,255,255,.75)';
+        ctx.lineWidth = 5 * dpr;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        trail.forEach((t, i) => { if (i === 0) ctx.moveTo(t.x, t.y); else ctx.lineTo(t.x, t.y); });
+        ctx.stroke();
+      }
+
+      items.forEach((item) => {
+        ctx.save();
+        ctx.translate(item.x, item.y);
+        ctx.rotate(item.rot);
+        ctx.fillStyle = item.sliced ? 'rgba(255,255,255,.3)' : item.color;
+        ctx.beginPath();
+        if (item.bomb) {
+          ctx.arc(0, 0, item.r * 0.8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#FF3D57';
+          ctx.beginPath();
+          ctx.arc(0, -item.r * 0.9, 6 * dpr, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.arc(0, 0, item.r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = 'rgba(255,255,255,.25)';
+          ctx.beginPath();
+          ctx.arc(-item.r * 0.3, -item.r * 0.3, item.r * 0.28, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      });
+
+      for (let i = 0; i < lives; i++) {
+        ctx.fillStyle = '#FF3D57';
+        ctx.beginPath();
+        ctx.arc(w - 30 * dpr - i * 26 * dpr, 150 * dpr, 8 * dpr, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 110 * dpr, h * 0.85, 220 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.font = '900 ' + (11 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('SWIPE TO SLICE', w * 0.5, h * 0.85 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (26 * dpr) + 'px Arial';
+        ctx.fillText('TAP TO START', w / 2, h * 0.30);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = '#FF3D57';
+        ctx.font = '900 ' + (32 * dpr) + 'px Arial';
+        ctx.fillText('GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() {
+      if (started && !ended) step();
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('pointermove', (e) => { if (e.buttons) pointerMove(e.clientX * dpr, e.clientY * dpr); });
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('touchmove', (e) => { const t = e.touches[0]; if (t) pointerMove(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER') {
+        if (data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+        else pointerMove(Number(data.x) * dpr, Number(data.y) * dpr);
+      }
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Archery Range</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0D1B12; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #0D1B12; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#0D1B12';
+    const TARGET_RINGS = ['#FF3D57', '#FFFFFF', '#5B8DEF', '#FFFFFF', '#FFC93C'];
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true;
+    let targetX = 0, targetY = 0, targetDir = 1, arrowsLeft = 8, score = 0, arrow = null, dragStart = null;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      targetY = h * 0.24;
+      targetX = w / 2;
+      draw();
+    }
+
+    function reset() {
+      score = 0; arrowsLeft = 8; ended = false; arrow = null;
+      scoreEl.textContent = score;
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) { if (ended) { reset(); return; } if (!started) start(); }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (arrow || arrowsLeft <= 0) return;
+      dragStart = { x, y };
+    }
+
+    function pointerUp(x, y) {
+      if (!dragStart || arrowsLeft <= 0) return;
+      const dx = dragStart.x - x, dy = dragStart.y - y;
+      dragStart = null;
+      if (dy < 20 * dpr) return;
+      arrow = { x: w / 2, y: h - 80 * dpr, vx: dx * 0.08, vy: -Math.hypot(dx, dy) * 0.16 };
+      arrowsLeft--;
+    }
+
+    function step() {
+      targetX += targetDir * 1.4 * dpr;
+      if (targetX > w - 70 * dpr || targetX < 70 * dpr) targetDir *= -1;
+
+      if (arrow) {
+        arrow.vy += 0.35 * dpr;
+        arrow.x += arrow.vx;
+        arrow.y += arrow.vy;
+        const dist = Math.hypot(arrow.x - targetX, arrow.y - targetY);
+        if (dist < 60 * dpr && arrow.vy > -2 * dpr) {
+          let pts = 0;
+          if (dist < 10 * dpr) pts = 50;
+          else if (dist < 22 * dpr) pts = 30;
+          else if (dist < 36 * dpr) pts = 20;
+          else pts = 10;
+          score += pts;
+          scoreEl.textContent = score;
+          arrow = null;
+          if (arrowsLeft <= 0) ended = true;
+          return;
+        }
+        if (arrow.y > h + 40 * dpr || arrow.x < -40 * dpr || arrow.x > w + 40 * dpr) {
+          arrow = null;
+          if (arrowsLeft <= 0) ended = true;
+        }
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      for (let i = TARGET_RINGS.length - 1; i >= 0; i--) {
+        ctx.fillStyle = TARGET_RINGS[i];
+        ctx.beginPath();
+        ctx.arc(targetX, targetY, 60 * dpr - i * 11 * dpr, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      if (arrow) {
+        ctx.strokeStyle = '#FFC93C';
+        ctx.lineWidth = 4 * dpr;
+        ctx.beginPath();
+        ctx.moveTo(arrow.x, arrow.y);
+        ctx.lineTo(arrow.x - arrow.vx * 1.5, arrow.y - arrow.vy * 1.5);
+        ctx.stroke();
+      }
+
+      if (dragStart) {
+        ctx.strokeStyle = 'rgba(255,255,255,.4)';
+        ctx.lineWidth = 3 * dpr;
+        ctx.beginPath();
+        ctx.moveTo(w / 2, h - 80 * dpr);
+        ctx.lineTo(w / 2, h - 80 * dpr);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 110 * dpr, h * 0.85, 220 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 ' + (13 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('ARROWS LEFT: ' + Math.max(0, arrowsLeft), w * 0.5, h * 0.85 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (22 * dpr) + 'px Arial';
+        ctx.fillText('SWIPE UP TO SHOOT ARROWS', w / 2, h * 0.45);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = TARGET_RINGS[0];
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText('GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() {
+      if (started && !ended) step();
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('pointerup', (e) => pointerUp(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('touchend', (e) => { const t = e.changedTouches[0]; if (t) pointerUp(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

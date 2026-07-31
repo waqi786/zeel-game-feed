@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Zombie Highway</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #1A1414; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #1A1414; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const ROAD_COLOR = '#3A3A3A';
+    const PLAYER_COLOR = '#00E5FF';
+    const ZOMBIE_COLOR = '#6EDB6E';
+    const OBSTACLE_COLOR = '#8B5A2B';
+
+    let dpr = 1, w = 0, h = 0;
+    const LANES = 3;
+    let laneW = 0, roadLeft = 0;
+    let started = false, ended = false, muted = true;
+    let playerLane = 1, playerX = 0, obstacles = [], score = 0, elapsed = 0, spawnTimer = 0, hp = 3;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      laneW = Math.min(w * 0.85, 300 * dpr) / LANES;
+      roadLeft = (w - laneW * LANES) / 2;
+      playerX = roadLeft + laneW * (playerLane + 0.5);
+      draw();
+    }
+
+    function reset() {
+      obstacles = []; score = 0; elapsed = 0; spawnTimer = 0; ended = false; playerLane = 1; hp = 3;
+      playerX = roadLeft + laneW * (playerLane + 0.5);
+      scoreEl.textContent = score;
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (name === 'LEFT') changeLane(-1);
+      if (name === 'RIGHT') changeLane(1);
+    }
+    function changeLane(dir) { playerLane = Math.max(0, Math.min(LANES - 1, playerLane + dir)); }
+
+    let swipeStartX = null;
+    function pointerDown(x, y) { if (ended) { reset(); return; } if (!started) { start(); return; } swipeStartX = x; }
+    function pointerUp(x) {
+      if (swipeStartX === null) return;
+      const dx = x - swipeStartX;
+      if (dx > 30 * dpr) changeLane(1);
+      else if (dx < -30 * dpr) changeLane(-1);
+      swipeStartX = null;
+    }
+
+    function spawnObstacle() {
+      const lane = Math.floor(Math.random() * LANES);
+      const isZombie = Math.random() < 0.5;
+      obstacles.push({ lane, y: -60 * dpr, speed: (5 + elapsed * 0.06) * dpr, zombie: isZombie });
+    }
+
+    function step(dt) {
+      elapsed += dt;
+      score = Math.floor(elapsed * 14);
+      scoreEl.textContent = score;
+
+      const targetX = roadLeft + laneW * (playerLane + 0.5);
+      playerX += (targetX - playerX) * 0.3;
+
+      spawnTimer -= dt;
+      if (spawnTimer <= 0) { spawnTimer = Math.max(0.3, 0.75 - elapsed * 0.01); spawnObstacle(); }
+
+      for (let i = obstacles.length - 1; i >= 0; i--) {
+        const o = obstacles[i];
+        o.y += o.speed;
+        if (o.y > h + 60 * dpr) { obstacles.splice(i, 1); continue; }
+        if (o.lane === playerLane && Math.abs(o.y - h * 0.78) < 44 * dpr) {
+          obstacles.splice(i, 1);
+          if (o.zombie) { score += 15; scoreEl.textContent = score; }
+          else { hp--; if (hp <= 0) ended = true; }
+        }
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = '#0F0F0F';
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.fillStyle = ROAD_COLOR;
+      ctx.fillRect(roadLeft, 0, laneW * LANES, h);
+
+      ctx.strokeStyle = 'rgba(255,255,255,.35)';
+      ctx.lineWidth = 3 * dpr;
+      ctx.setLineDash([18 * dpr, 14 * dpr]);
+      for (let i = 1; i < LANES; i++) {
+        ctx.beginPath();
+        ctx.moveTo(roadLeft + i * laneW, 0);
+        ctx.lineTo(roadLeft + i * laneW, h);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+
+      obstacles.forEach((o) => {
+        const x = roadLeft + laneW * (o.lane + 0.5);
+        ctx.fillStyle = o.zombie ? ZOMBIE_COLOR : OBSTACLE_COLOR;
+        ctx.beginPath();
+        ctx.roundRect(x - laneW * 0.3, o.y - 28 * dpr, laneW * 0.6, 56 * dpr, 8 * dpr);
+        ctx.fill();
+      });
+
+      ctx.fillStyle = PLAYER_COLOR;
+      ctx.beginPath();
+      ctx.roundRect(playerX - laneW * 0.3, h * 0.78 - 30 * dpr, laneW * 0.6, 60 * dpr, 8 * dpr);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 100 * dpr, h * 0.06, 200 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 ' + (13 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('HP: ' + Math.max(0, hp) + '   SCORE: ' + score, w * 0.5, h * 0.06 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (20 * dpr) + 'px Arial';
+        ctx.fillText('SWIPE TO SMASH ZOMBIES, AVOID CRATES', w / 2, h * 0.45);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = OBSTACLE_COLOR;
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText('GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0, lastT = 0;
+    function loop(t) {
+      const dt = lastT ? Math.min(0.05, (t - lastT) / 1000) : 0;
+      lastT = t;
+      if (started && !ended) step(dt);
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('pointerup', (e) => pointerUp(e.clientX * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('touchend', (e) => { const t = e.changedTouches[0]; if (t) pointerUp(t.clientX * dpr); }, { passive: true });
+    addEventListener('keydown', (e) => {
+      if (!started) start();
+      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') control('LEFT');
+      if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') control('RIGHT');
+    });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER') {
+        if (data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+        if (data.kind === 'pointerup') pointerUp(Number(data.x) * dpr);
+      }
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

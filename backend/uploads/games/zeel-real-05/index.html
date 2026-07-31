@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Candy Match</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #1A1024; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #1A1024; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#1A1024';
+    const COLORS = ['#FF3D57', '#FFC93C', '#00C48C', '#5B8DEF', '#B85CFF', '#FF7043'];
+    const COLS = 7, ROWS = 8;
+
+    let dpr = 1, w = 0, h = 0, cellSize = 0, boardLeft = 0, boardTop = 0;
+    let grid = [], selected = null, score = 0, started = false, ended = false, muted = true;
+    let animating = false;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      cellSize = Math.floor((w - 40 * dpr) / COLS);
+      boardLeft = (w - cellSize * COLS) / 2;
+      boardTop = h * 0.24;
+      draw();
+    }
+
+    function randColor() { return Math.floor(Math.random() * COLORS.length); }
+
+    function reset() {
+      grid = [];
+      for (let r = 0; r < ROWS; r++) {
+        const row = [];
+        for (let c = 0; c < COLS; c++) {
+          let color;
+          do { color = randColor(); } while (
+            (c >= 2 && row[c - 1] === color && row[c - 2] === color)
+          );
+          row.push(color);
+        }
+        grid.push(row);
+      }
+      score = 0; ended = false; selected = null;
+      scoreEl.textContent = score;
+    }
+
+    function start() {
+      hud.style.display = 'flex';
+      started = true;
+      raf = requestAnimationFrame(loop);
+    }
+
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) start();
+    }
+
+    function cellAt(x, y) {
+      const c = Math.floor((x - boardLeft) / cellSize);
+      const r = Math.floor((y - boardTop) / cellSize);
+      if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return null;
+      return { r, c };
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (animating) return;
+      const cell = cellAt(x, y);
+      if (!cell) return;
+      if (!selected) {
+        selected = cell;
+      } else {
+        const dr = Math.abs(cell.r - selected.r), dc = Math.abs(cell.c - selected.c);
+        if (dr + dc === 1) {
+          trySwap(selected, cell);
+        }
+        selected = null;
+      }
+    }
+
+    function trySwap(a, b) {
+      swapCells(a, b);
+      const matches = findMatches();
+      if (matches.length === 0) {
+        swapCells(a, b);
+      } else {
+        animating = true;
+        resolveMatches();
+      }
+    }
+
+    function swapCells(a, b) {
+      const tmp = grid[a.r][a.c];
+      grid[a.r][a.c] = grid[b.r][b.c];
+      grid[b.r][b.c] = tmp;
+    }
+
+    function findMatches() {
+      const matched = new Set();
+      for (let r = 0; r < ROWS; r++) {
+        let run = 1;
+        for (let c = 1; c <= COLS; c++) {
+          if (c < COLS && grid[r][c] === grid[r][c - 1]) run++;
+          else {
+            if (run >= 3) for (let k = 0; k < run; k++) matched.add(`${r},${c - 1 - k}`);
+            run = 1;
+          }
+        }
+      }
+      for (let c = 0; c < COLS; c++) {
+        let run = 1;
+        for (let r = 1; r <= ROWS; r++) {
+          if (r < ROWS && grid[r][c] === grid[r - 1][c]) run++;
+          else {
+            if (run >= 3) for (let k = 0; k < run; k++) matched.add(`${r - 1 - k},${c}`);
+            run = 1;
+          }
+        }
+      }
+      return [...matched].map((s) => { const [r, c] = s.split(',').map(Number); return { r, c }; });
+    }
+
+    function resolveMatches() {
+      let matches = findMatches();
+      let chain = 0;
+      function step() {
+        matches = findMatches();
+        if (matches.length === 0) { animating = false; return; }
+        chain++;
+        score += matches.length * 10 * chain;
+        scoreEl.textContent = score;
+        matches.forEach(({ r, c }) => { grid[r][c] = -1; });
+        for (let c = 0; c < COLS; c++) {
+          let write = ROWS - 1;
+          for (let r = ROWS - 1; r >= 0; r--) {
+            if (grid[r][c] !== -1) { grid[write][c] = grid[r][c]; write--; }
+          }
+          for (let r = write; r >= 0; r--) grid[r][c] = randColor();
+        }
+        setTimeout(step, 180);
+      }
+      setTimeout(step, 120);
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.fillStyle = 'rgba(255,255,255,.03)';
+      ctx.beginPath();
+      ctx.roundRect(boardLeft - 8 * dpr, boardTop - 8 * dpr, cellSize * COLS + 16 * dpr, cellSize * ROWS + 16 * dpr, 14 * dpr);
+      ctx.fill();
+
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          const val = grid[r][c];
+          if (val < 0) continue;
+          const x = boardLeft + c * cellSize, y = boardTop + r * cellSize;
+          const isSel = selected && selected.r === r && selected.c === c;
+          ctx.fillStyle = COLORS[val];
+          ctx.beginPath();
+          ctx.arc(x + cellSize / 2, y + cellSize / 2, cellSize * (isSel ? 0.44 : 0.38), 0, Math.PI * 2);
+          ctx.fill();
+          if (isSel) {
+            ctx.strokeStyle = '#FFFFFF';
+            ctx.lineWidth = 3 * dpr;
+            ctx.stroke();
+          }
+        }
+      }
+
+      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 130 * dpr, h * 0.16, 260 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.font = '900 ' + (11 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('TAP TWO CANDIES TO SWAP', w * 0.5, h * 0.16 + 20 * dpr);
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = COLORS[0];
+        ctx.font = '900 ' + (32 * dpr) + 'px Arial';
+        ctx.fillText('GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+      }
+    }
+
+    let raf = 0;
+    function loop() { draw(); raf = requestAnimationFrame(loop); }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

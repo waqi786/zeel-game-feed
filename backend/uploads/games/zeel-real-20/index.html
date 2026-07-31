@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Slide Puzzle</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #171420; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #171420; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#171420';
+    const TILE_COLOR = '#B85CFF';
+    const N = 4;
+
+    let dpr = 1, w = 0, h = 0, cellSize = 0, boardLeft = 0, boardTop = 0;
+    let tiles = [], score = 0, started = false, ended = false, muted = true, moves = 0;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      cellSize = Math.floor((w - 40 * dpr) / N);
+      boardLeft = (w - cellSize * N) / 2;
+      boardTop = h * 0.26;
+      draw();
+    }
+
+    function isSolvable(arr) {
+      let inv = 0;
+      const flat = arr.filter((v) => v !== 0);
+      for (let i = 0; i < flat.length; i++) for (let j = i + 1; j < flat.length; j++) if (flat[i] > flat[j]) inv++;
+      const blankRow = Math.floor(arr.indexOf(0) / N);
+      if (N % 2 === 1) return inv % 2 === 0;
+      return (inv + blankRow) % 2 === 1;
+    }
+
+    function reset() {
+      let arr;
+      do {
+        arr = [...Array(N * N).keys()];
+        for (let i = arr.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [arr[i], arr[j]] = [arr[j], arr[i]]; }
+      } while (!isSolvable(arr) || isSolved(arr));
+      tiles = arr;
+      score = 0; ended = false; moves = 0;
+      scoreEl.textContent = score;
+    }
+
+    function isSolved(arr) {
+      for (let i = 0; i < arr.length - 1; i++) if (arr[i] !== i + 1) return false;
+      return arr[arr.length - 1] === 0;
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) { if (ended) { reset(); return; } if (!started) start(); }
+
+    function cellAt(x, y) {
+      const c = Math.floor((x - boardLeft) / cellSize);
+      const r = Math.floor((y - boardTop) / cellSize);
+      if (c < 0 || c >= N || r < 0 || r >= N) return -1;
+      return r * N + c;
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      const idx = cellAt(x, y);
+      if (idx < 0) return;
+      const blank = tiles.indexOf(0);
+      const idxR = Math.floor(idx / N), idxC = idx % N;
+      const blankR = Math.floor(blank / N), blankC = blank % N;
+      if (Math.abs(idxR - blankR) + Math.abs(idxC - blankC) === 1) {
+        [tiles[idx], tiles[blank]] = [tiles[blank], tiles[idx]];
+        moves++;
+        if (isSolved(tiles)) {
+          score = Math.max(20, 500 - moves * 5);
+          scoreEl.textContent = score;
+          ended = true;
+        }
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      tiles.forEach((v, i) => {
+        if (v === 0) return;
+        const r = Math.floor(i / N), c = i % N;
+        const x = boardLeft + c * cellSize, y = boardTop + r * cellSize;
+        ctx.fillStyle = TILE_COLOR;
+        ctx.beginPath();
+        ctx.roundRect(x + 4 * dpr, y + 4 * dpr, cellSize - 8 * dpr, cellSize - 8 * dpr, 8 * dpr);
+        ctx.fill();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + Math.floor(cellSize * 0.36) + 'px Arial';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(String(v), x + cellSize / 2, y + cellSize / 2 + 2 * dpr);
+      });
+      ctx.textBaseline = 'alphabetic';
+
+      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 110 * dpr, h * 0.14, 220 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.font = '900 ' + (11 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('MOVES: ' + moves, w * 0.5, h * 0.14 + 20 * dpr);
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = TILE_COLOR;
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText('SOLVED!', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap for new puzzle', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() { draw(); raf = requestAnimationFrame(loop); }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Brick Smash</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #10121C; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #10121C; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#10121C';
+    const PADDLE_COLOR = '#00C48C';
+    const BALL_COLOR = '#FFFFFF';
+    const BRICK_COLORS = ['#FF3D57', '#FFC93C', '#5B8DEF', '#B85CFF'];
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true;
+    let paddleX = 0, ballX = 0, ballY = 0, ballVX = 0, ballVY = 0;
+    let bricks = [], score = 0, lives = 3;
+    const PADDLE_W = 100, PADDLE_H = 16, ROWS = 5, COLS = 7;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      paddleX = w / 2;
+      draw();
+    }
+
+    function buildBricks() {
+      bricks = [];
+      const brickW = (w - 40 * dpr) / COLS;
+      const brickH = 30 * dpr;
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          bricks.push({ x: 20 * dpr + c * brickW, y: 140 * dpr + r * (brickH + 8 * dpr), w: brickW - 6 * dpr, h: brickH, color: BRICK_COLORS[r % BRICK_COLORS.length], alive: true });
+        }
+      }
+    }
+
+    function reset() {
+      score = 0; lives = 3; ended = false;
+      scoreEl.textContent = score;
+      buildBricks();
+      serveBall();
+    }
+
+    function serveBall() {
+      ballX = w / 2; ballY = h - 160 * dpr;
+      ballVX = (Math.random() < 0.5 ? -1 : 1) * 4.6 * dpr;
+      ballVY = -6 * dpr;
+    }
+
+    function start() {
+      hud.style.display = 'flex';
+      started = true;
+      raf = requestAnimationFrame(loop);
+    }
+
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (name === 'LEFT') paddleX -= 46 * dpr;
+      if (name === 'RIGHT') paddleX += 46 * dpr;
+    }
+
+    function pointerDown(x) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      paddleX = x;
+    }
+    function pointerMove(x) { if (started && !ended) paddleX = x; }
+
+    function step() {
+      paddleX = Math.max(PADDLE_W / 2 * dpr, Math.min(w - PADDLE_W / 2 * dpr, paddleX));
+      ballX += ballVX; ballY += ballVY;
+
+      if (ballX < 8 * dpr) { ballX = 8 * dpr; ballVX *= -1; }
+      if (ballX > w - 8 * dpr) { ballX = w - 8 * dpr; ballVX *= -1; }
+      if (ballY < 8 * dpr) { ballY = 8 * dpr; ballVY *= -1; }
+
+      const py = h - 100 * dpr;
+      if (ballVY > 0 && ballY > py - 10 * dpr && ballY < py + PADDLE_H * dpr && Math.abs(ballX - paddleX) < PADDLE_W / 2 * dpr + 10 * dpr) {
+        ballVY *= -1;
+        ballVX += (ballX - paddleX) * 0.06;
+      }
+
+      bricks.forEach((b) => {
+        if (!b.alive) return;
+        if (ballX > b.x && ballX < b.x + b.w && ballY > b.y && ballY < b.y + b.h) {
+          b.alive = false;
+          ballVY *= -1;
+          score += 10;
+          scoreEl.textContent = score;
+        }
+      });
+
+      if (bricks.every((b) => !b.alive)) buildBricks();
+
+      if (ballY > h + 40 * dpr) {
+        lives -= 1;
+        if (lives <= 0) ended = true;
+        else serveBall();
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      bricks.forEach((b) => {
+        if (!b.alive) return;
+        ctx.fillStyle = b.color;
+        ctx.beginPath();
+        ctx.roundRect(b.x, b.y, b.w, b.h, 4 * dpr);
+        ctx.fill();
+      });
+
+      ctx.fillStyle = PADDLE_COLOR;
+      ctx.beginPath();
+      ctx.roundRect(paddleX - PADDLE_W / 2 * dpr, h - 100 * dpr, PADDLE_W * dpr, PADDLE_H * dpr, 6 * dpr);
+      ctx.fill();
+
+      ctx.fillStyle = BALL_COLOR;
+      ctx.beginPath();
+      ctx.arc(ballX, ballY, 9 * dpr, 0, Math.PI * 2);
+      ctx.fill();
+
+      for (let i = 0; i < lives; i++) {
+        ctx.fillStyle = PADDLE_COLOR;
+        ctx.beginPath();
+        ctx.arc(w - 30 * dpr - i * 26 * dpr, 100 * dpr, 8 * dpr, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 120 * dpr, h * 0.9, 240 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.font = '900 ' + (11 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('DRAG TO MOVE PADDLE', w * 0.5, h * 0.9 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (26 * dpr) + 'px Arial';
+        ctx.fillText('TAP TO START', w / 2, h * 0.30);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = BRICK_COLORS[0];
+        ctx.font = '900 ' + (32 * dpr) + 'px Arial';
+        ctx.fillText('GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() {
+      if (started && !ended) step();
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr));
+    addEventListener('pointermove', (e) => { if (e.buttons) pointerMove(e.clientX * dpr); });
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr); }, { passive: true });
+    addEventListener('touchmove', (e) => { const t = e.touches[0]; if (t) pointerMove(t.clientX * dpr); }, { passive: true });
+    addEventListener('keydown', (e) => {
+      if (!started) start();
+      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') { e.preventDefault(); paddleX -= 30 * dpr; }
+      if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') { e.preventDefault(); paddleX += 30 * dpr; }
+    });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER') {
+        if (data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr);
+        else pointerMove(Number(data.x) * dpr);
+      }
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Memory Match</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #12101C; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #12101C; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#12101C';
+    const CARD_BACK = '#2A2540';
+    const ICON_COLORS = ['#FF3D57', '#FFC93C', '#00C48C', '#5B8DEF', '#B85CFF', '#FF7043', '#00E5FF', '#EDE0C8'];
+    const COLS = 4, ROWS = 4;
+
+    let dpr = 1, w = 0, h = 0, cellSize = 0, boardLeft = 0, boardTop = 0;
+    let cards = [], flipped = [], matched = [], score = 0, started = false, ended = false, muted = true, lockInput = false, moves = 0;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      cellSize = Math.floor((w - 40 * dpr) / COLS);
+      boardLeft = (w - cellSize * COLS) / 2;
+      boardTop = h * 0.22;
+      draw();
+    }
+
+    function reset() {
+      const pairs = [...ICON_COLORS, ...ICON_COLORS];
+      for (let i = pairs.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pairs[i], pairs[j]] = [pairs[j], pairs[i]]; }
+      cards = pairs;
+      flipped = []; matched = []; score = 0; ended = false; lockInput = false; moves = 0;
+      scoreEl.textContent = score;
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) { if (ended) { reset(); return; } if (!started) start(); }
+
+    function cellAt(x, y) {
+      const c = Math.floor((x - boardLeft) / cellSize);
+      const r = Math.floor((y - boardTop) / cellSize);
+      if (c < 0 || c >= COLS || r < 0 || r >= ROWS) return -1;
+      return r * COLS + c;
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (lockInput) return;
+      const idx = cellAt(x, y);
+      if (idx < 0 || flipped.includes(idx) || matched.includes(idx)) return;
+      flipped.push(idx);
+      if (flipped.length === 2) {
+        moves++;
+        lockInput = true;
+        const [a, b] = flipped;
+        if (cards[a] === cards[b]) {
+          matched.push(a, b);
+          score += 20;
+          scoreEl.textContent = score;
+          flipped = [];
+          lockInput = false;
+          if (matched.length === cards.length) ended = true;
+        } else {
+          setTimeout(() => { flipped = []; lockInput = false; }, 700);
+        }
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      cards.forEach((color, i) => {
+        const r = Math.floor(i / COLS), c = i % COLS;
+        const x = boardLeft + c * cellSize, y = boardTop + r * cellSize;
+        const isUp = flipped.includes(i) || matched.includes(i);
+        ctx.fillStyle = isUp ? color : CARD_BACK;
+        ctx.beginPath();
+        ctx.roundRect(x + 4 * dpr, y + 4 * dpr, cellSize - 8 * dpr, cellSize - 8 * dpr, 8 * dpr);
+        ctx.fill();
+        if (!isUp) {
+          ctx.fillStyle = 'rgba(255,255,255,.15)';
+          ctx.font = '900 ' + Math.floor(cellSize * 0.3) + 'px Arial';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('?', x + cellSize / 2, y + cellSize / 2 + 2 * dpr);
+          ctx.textBaseline = 'alphabetic';
+        }
+      });
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 100 * dpr, h * 0.10, 200 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 ' + (13 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('MOVES: ' + moves, w * 0.5, h * 0.10 + 20 * dpr);
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = ICON_COLORS[2];
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText('ALL MATCHED!', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap for new game', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() { draw(); raf = requestAnimationFrame(loop); }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

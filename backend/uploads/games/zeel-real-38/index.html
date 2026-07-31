@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Bowling Alley</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0E1522; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #0E1522; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#0E1522';
+    const LANE_COLOR = '#3B2A1A';
+    const PIN_COLOR = '#FFFFFF';
+    const BALL_COLOR = '#FF3D57';
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true;
+    let ballX = 0, ballY = 0, ballVX = 0, ballVY = 0, rolling = false, frame = 1, score = 0, pins = [], dragStart = null;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      resetBall();
+      draw();
+    }
+
+    function setupPins() {
+      pins = [];
+      const rows = [1, 2, 3, 4];
+      const topY = h * 0.18;
+      let idx = 0;
+      rows.forEach((count, r) => {
+        const spacing = 34 * dpr;
+        const startX = w / 2 - ((count - 1) * spacing) / 2;
+        for (let i = 0; i < count; i++) {
+          pins.push({ x: startX + i * spacing, y: topY + r * 34 * dpr, standing: true, id: idx++ });
+        }
+      });
+    }
+
+    function resetBall() {
+      ballX = w / 2; ballY = h * 0.88; ballVX = 0; ballVY = 0; rolling = false;
+    }
+
+    function reset() {
+      score = 0; frame = 1; ended = false;
+      scoreEl.textContent = score;
+      setupPins();
+      resetBall();
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) { if (ended) { reset(); return; } if (!started) start(); }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (rolling) return;
+      dragStart = { x, y };
+    }
+    function pointerUp(x, y) {
+      if (!dragStart || rolling) return;
+      const dx = dragStart.x - x, dy = dragStart.y - y;
+      dragStart = null;
+      if (dy < 20 * dpr) return;
+      ballVX = dx * 0.05;
+      ballVY = -Math.hypot(dx, dy) * 0.14;
+      rolling = true;
+    }
+
+    function step() {
+      if (rolling) {
+        ballX += ballVX;
+        ballY += ballVY;
+        if (ballX < 20 * dpr || ballX > w - 20 * dpr) ballVX *= -0.5;
+
+        pins.forEach((p) => {
+          if (p.standing && Math.hypot(ballX - p.x, ballY - p.y) < 20 * dpr) {
+            p.standing = false;
+            score += 10;
+            scoreEl.textContent = score;
+          }
+        });
+
+        if (ballY < h * 0.12 || Math.abs(ballVY) < 0.4) {
+          rolling = false;
+          resetBall();
+          if (pins.every((p) => !p.standing)) {
+            score += 50;
+            scoreEl.textContent = score;
+            frame++;
+            if (frame > 5) { ended = true; return; }
+            setupPins();
+          } else if (frame >= 5) {
+            ended = true;
+          } else {
+            frame++;
+            if (frame > 5) ended = true;
+          }
+        }
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.fillStyle = LANE_COLOR;
+      ctx.fillRect(w * 0.28, 0, w * 0.44, h);
+
+      pins.forEach((p) => {
+        if (!p.standing) return;
+        ctx.fillStyle = PIN_COLOR;
+        ctx.beginPath();
+        ctx.ellipse(p.x, p.y, 10 * dpr, 16 * dpr, 0, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      ctx.fillStyle = BALL_COLOR;
+      ctx.beginPath();
+      ctx.arc(ballX, ballY, 16 * dpr, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 110 * dpr, h * 0.06, 220 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 ' + (13 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('FRAME: ' + Math.min(frame, 5) + '/5', w * 0.5, h * 0.06 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (22 * dpr) + 'px Arial';
+        ctx.fillText('SWIPE UP TO BOWL', w / 2, h * 0.45);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = BALL_COLOR;
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText('GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() {
+      if (started && !ended) step();
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('pointerup', (e) => pointerUp(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('touchend', (e) => { const t = e.changedTouches[0]; if (t) pointerUp(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

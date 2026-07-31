@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Neon Territory</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #05070A; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #05070A; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Area <span id="score">0</span>%</div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#05070A';
+    const PLAYER_COLOR = '#00E5FF';
+    const ENEMY_COLOR = '#FF3D57';
+    const GRID = 26;
+
+    let dpr = 1, w = 0, h = 0, cell = 0, gridLeft = 0, gridTop = 0;
+    let owner = [], player = { x: 0, y: 0, dir: 'up' }, enemies = [], score = 0;
+    let started = false, ended = false, muted = true, trail = [];
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      cell = Math.floor(Math.min(w, h * 0.72) / GRID);
+      gridLeft = (w - cell * GRID) / 2;
+      gridTop = h * 0.14;
+      draw();
+    }
+
+    function reset() {
+      owner = Array(GRID * GRID).fill(0);
+      const cx = Math.floor(GRID / 2), cy = Math.floor(GRID / 2);
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const x = cx + dx, y = cy + dy;
+        if (x >= 0 && x < GRID && y >= 0 && y < GRID) owner[y * GRID + x] = 1;
+      }
+      player = { x: cx, y: cy - 3, dir: 'up' };
+      enemies = [
+        { x: 3, y: 3, dir: 'right' },
+        { x: GRID - 4, y: GRID - 4, dir: 'left' }
+      ];
+      trail = [];
+      score = ownedPercent();
+      scoreEl.textContent = score;
+      ended = false;
+    }
+
+    function ownedPercent() { return Math.round((owner.filter((v) => v === 1).length / (GRID * GRID)) * 100); }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); tickTimer = 0; }
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (name === 'UP') player.dir = 'up';
+      if (name === 'DOWN') player.dir = 'down';
+      if (name === 'LEFT') player.dir = 'left';
+      if (name === 'RIGHT') player.dir = 'right';
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      const dx = x - (gridLeft + player.x * cell), dy = y - (gridTop + player.y * cell);
+      if (Math.abs(dx) > Math.abs(dy)) player.dir = dx > 0 ? 'right' : 'left';
+      else player.dir = dy > 0 ? 'down' : 'up';
+    }
+
+    function moveEntity(e) {
+      if (e.dir === 'up') e.y--;
+      if (e.dir === 'down') e.y++;
+      if (e.dir === 'left') e.x--;
+      if (e.dir === 'right') e.x++;
+      if (e.x < 0) { e.x = 0; e.dir = 'right'; }
+      if (e.x >= GRID) { e.x = GRID - 1; e.dir = 'left'; }
+      if (e.y < 0) { e.y = 0; e.dir = 'down'; }
+      if (e.y >= GRID) { e.y = GRID - 1; e.dir = 'up'; }
+    }
+
+    let tickTimer = 0;
+    function step(dt) {
+      tickTimer += dt;
+      const tickRate = 0.09;
+      if (tickTimer < tickRate) return;
+      tickTimer = 0;
+
+      moveEntity(player);
+      const idx = player.y * GRID + player.x;
+      const inOwned = owner[idx] === 1;
+      if (!inOwned) {
+        trail.push(idx);
+        if (trail.includes(idx) && trail.filter((t) => t === idx).length > 1) {
+          ended = true; return;
+        }
+      } else if (trail.length) {
+        trail.forEach((t) => { owner[t] = 1; });
+        trail = [];
+        score = ownedPercent();
+        scoreEl.textContent = score;
+        if (score >= 70) ended = true;
+      }
+
+      enemies.forEach((e) => {
+        if (Math.random() < 0.15) {
+          const dirs = ['up', 'down', 'left', 'right'];
+          e.dir = dirs[Math.floor(Math.random() * dirs.length)];
+        }
+        moveEntity(e);
+        if (e.x === player.x && e.y === player.y) ended = true;
+        if (trail.includes(e.y * GRID + e.x)) ended = true;
+      });
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      for (let y = 0; y < GRID; y++) {
+        for (let x = 0; x < GRID; x++) {
+          const idx = y * GRID + x;
+          if (owner[idx] === 1) {
+            ctx.fillStyle = 'rgba(0,229,255,.25)';
+            ctx.fillRect(gridLeft + x * cell, gridTop + y * cell, cell, cell);
+          }
+        }
+      }
+      trail.forEach((idx) => {
+        const x = idx % GRID, y = Math.floor(idx / GRID);
+        ctx.fillStyle = 'rgba(0,229,255,.55)';
+        ctx.fillRect(gridLeft + x * cell, gridTop + y * cell, cell, cell);
+      });
+
+      ctx.fillStyle = PLAYER_COLOR;
+      ctx.fillRect(gridLeft + player.x * cell, gridTop + player.y * cell, cell, cell);
+
+      ctx.fillStyle = ENEMY_COLOR;
+      enemies.forEach((e) => { ctx.fillRect(gridLeft + e.x * cell, gridTop + e.y * cell, cell, cell); });
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 100 * dpr, h * 0.04, 200 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 ' + (13 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('OWN 70% TO WIN: ' + score + '%', w * 0.5, h * 0.04 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (20 * dpr) + 'px Arial';
+        ctx.fillText('SWIPE TO CLAIM TERRITORY', w / 2, h * 0.92);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = score >= 70 ? PLAYER_COLOR : ENEMY_COLOR;
+        ctx.font = '900 ' + (28 * dpr) + 'px Arial';
+        ctx.fillText(score >= 70 ? 'TERRITORY WON!' : 'CAUGHT!', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Area: ' + score + '%', w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0, lastT = 0;
+    function loop(t) {
+      const dt = lastT ? Math.min(0.05, (t - lastT) / 1000) : 0;
+      lastT = t;
+      if (started && !ended) step(dt);
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    let swipeStart = null;
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => { swipeStart = { x: e.clientX * dpr, y: e.clientY * dpr }; pointerDown(e.clientX * dpr, e.clientY * dpr); });
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) { swipeStart = { x: t.clientX * dpr, y: t.clientY * dpr }; pointerDown(t.clientX * dpr, t.clientY * dpr); } }, { passive: true });
+    addEventListener('keydown', (e) => {
+      if (!started) start();
+      if (e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') control('UP');
+      if (e.key === 'ArrowDown' || e.key.toLowerCase() === 's') control('DOWN');
+      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') control('LEFT');
+      if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') control('RIGHT');
+    });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

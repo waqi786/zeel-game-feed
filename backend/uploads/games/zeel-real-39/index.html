@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Slalom Skier</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #E8F4FF; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #E8F4FF; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(0,0,0,.16); border-radius: 999px; background: rgba(0,0,0,.55); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#E8F4FF';
+    const SKIER_COLOR = '#FF3D57';
+    const GATE_COLOR = '#FF7043';
+    const TREE_COLOR = '#1F7A4D';
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true;
+    let skierX = 0, gates = [], trees = [], score = 0, elapsed = 0, spawnTimer = 0;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      skierX = w / 2;
+      draw();
+    }
+
+    function reset() {
+      gates = []; trees = []; score = 0; elapsed = 0; spawnTimer = 0; ended = false;
+      skierX = w / 2;
+      scoreEl.textContent = score;
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (name === 'LEFT') skierX -= 36 * dpr;
+      if (name === 'RIGHT') skierX += 36 * dpr;
+    }
+
+    function pointerMove(x) { if (started && !ended) skierX = x; }
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      pointerMove(x);
+    }
+
+    function spawnObstacle() {
+      const speed = (3 + elapsed * 0.04) * dpr;
+      if (Math.random() < 0.55) {
+        const gapX = 60 * dpr + Math.random() * (w - 220 * dpr);
+        gates.push({ x: gapX, gap: 130 * dpr, y: -30 * dpr, speed, passed: false });
+      } else {
+        trees.push({ x: 20 * dpr + Math.random() * (w - 40 * dpr), y: -30 * dpr, speed });
+      }
+    }
+
+    function step(dt) {
+      elapsed += dt;
+      score = Math.floor(elapsed * 12);
+      scoreEl.textContent = score;
+      skierX = Math.max(20 * dpr, Math.min(w - 20 * dpr, skierX));
+
+      spawnTimer -= dt;
+      if (spawnTimer <= 0) { spawnTimer = Math.max(0.5, 1.1 - elapsed * 0.008); spawnObstacle(); }
+
+      for (let i = gates.length - 1; i >= 0; i--) {
+        const g = gates[i];
+        g.y += g.speed;
+        if (g.y > h + 40 * dpr) { gates.splice(i, 1); continue; }
+        if (!g.passed && g.y > h * 0.78) {
+          g.passed = true;
+          const inGap = skierX > g.x - g.gap / 2 && skierX < g.x + g.gap / 2;
+          if (!inGap) ended = true;
+          else score += 5;
+        }
+      }
+      for (let i = trees.length - 1; i >= 0; i--) {
+        const t = trees[i];
+        t.y += t.speed;
+        if (t.y > h + 40 * dpr) { trees.splice(i, 1); continue; }
+        if (Math.abs(t.y - h * 0.78) < 22 * dpr && Math.abs(t.x - skierX) < 22 * dpr) ended = true;
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      gates.forEach((g) => {
+        ctx.fillStyle = GATE_COLOR;
+        ctx.fillRect(g.x - g.gap / 2 - 8 * dpr, g.y, 8 * dpr, 30 * dpr);
+        ctx.fillRect(g.x + g.gap / 2, g.y, 8 * dpr, 30 * dpr);
+      });
+
+      trees.forEach((t) => {
+        ctx.fillStyle = TREE_COLOR;
+        ctx.beginPath();
+        ctx.moveTo(t.x, t.y - 18 * dpr);
+        ctx.lineTo(t.x - 16 * dpr, t.y + 12 * dpr);
+        ctx.lineTo(t.x + 16 * dpr, t.y + 12 * dpr);
+        ctx.closePath();
+        ctx.fill();
+      });
+
+      ctx.fillStyle = SKIER_COLOR;
+      ctx.beginPath();
+      ctx.arc(skierX, h * 0.78, 16 * dpr, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 90 * dpr, h * 0.06, 180 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 ' + (14 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('SCORE: ' + score, w * 0.5, h * 0.06 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#1F2937';
+        ctx.font = '900 ' + (22 * dpr) + 'px Arial';
+        ctx.fillText('DRAG TO SKI THROUGH GATES', w / 2, h * 0.42);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = SKIER_COLOR;
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText('GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0, lastT = 0;
+    function loop(t) {
+      const dt = lastT ? Math.min(0.05, (t - lastT) / 1000) : 0;
+      lastT = t;
+      if (started && !ended) step(dt);
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('pointermove', (e) => { if (e.buttons) pointerMove(e.clientX * dpr); });
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('touchmove', (e) => { const t = e.touches[0]; if (t) pointerMove(t.clientX * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER') {
+        if (data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+        else pointerMove(Number(data.x) * dpr);
+      }
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

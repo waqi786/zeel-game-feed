@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Reaction Flash</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #121212; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #121212; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const WAIT_COLOR = '#FF3D57';
+    const GO_COLOR = '#00C48C';
+    const EARLY_COLOR = '#FFC93C';
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true;
+    let state = 'idle', waitTimer = 0, roundStartT = 0, round = 0, score = 0, totalRounds = 5, lastReaction = 0, best = Infinity;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      draw();
+    }
+
+    function reset() {
+      round = 0; score = 0; ended = false; best = Infinity;
+      scoreEl.textContent = score;
+      state = 'idle';
+    }
+
+    function start() {
+      hud.style.display = 'flex';
+      started = true;
+      raf = requestAnimationFrame(loop);
+      nextRound();
+    }
+
+    function nextRound() {
+      round++;
+      if (round > totalRounds) { ended = true; return; }
+      state = 'waiting';
+      waitTimer = 1 + Math.random() * 2.5;
+    }
+
+    function control(name) {
+      if (ended) { reset(); start(); return; }
+      if (!started) { start(); return; }
+      handleTap();
+    }
+
+    function handleTap() {
+      if (state === 'waiting') {
+        state = 'early';
+        setTimeout(() => { if (state === 'early') nextRound(); }, 700);
+      } else if (state === 'go') {
+        const reaction = performance.now() - roundStartT;
+        lastReaction = reaction;
+        best = Math.min(best, reaction);
+        const pts = Math.max(10, Math.round(500 - reaction));
+        score += pts;
+        scoreEl.textContent = score;
+        state = 'result';
+        setTimeout(() => { if (state === 'result') nextRound(); }, 700);
+      }
+    }
+
+    function pointerDown() {
+      if (ended) { reset(); start(); return; }
+      if (!started) { start(); return; }
+      handleTap();
+    }
+
+    function step(dt) {
+      if (state === 'waiting') {
+        waitTimer -= dt;
+        if (waitTimer <= 0) { state = 'go'; roundStartT = performance.now(); }
+      }
+    }
+
+    function draw() {
+      let bg = '#121212';
+      if (state === 'waiting') bg = WAIT_COLOR;
+      else if (state === 'go') bg = GO_COLOR;
+      else if (state === 'early') bg = EARLY_COLOR;
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.fillStyle = '#FFFFFF';
+      ctx.textAlign = 'center';
+      if (!started) {
+        ctx.font = '900 ' + (26 * dpr) + 'px Arial';
+        ctx.fillText('TAP TO START', w / 2, h * 0.46);
+      } else if (state === 'waiting') {
+        ctx.font = '900 ' + (24 * dpr) + 'px Arial';
+        ctx.fillText('WAIT FOR GREEN...', w / 2, h * 0.46);
+      } else if (state === 'go') {
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText('TAP NOW!', w / 2, h * 0.46);
+      } else if (state === 'early') {
+        ctx.font = '900 ' + (24 * dpr) + 'px Arial';
+        ctx.fillText('TOO SOON!', w / 2, h * 0.46);
+      } else if (state === 'result') {
+        ctx.font = '900 ' + (28 * dpr) + 'px Arial';
+        ctx.fillText(Math.round(lastReaction) + ' ms', w / 2, h * 0.46);
+      }
+
+      if (started && !ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.4)';
+        ctx.beginPath();
+        ctx.roundRect(w * 0.5 - 100 * dpr, h * 0.12, 200 * dpr, 30 * dpr, 999 * dpr);
+        ctx.fill();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (12 * dpr) + 'px Arial';
+        ctx.fillText('ROUND ' + Math.min(round, totalRounds) + ' / ' + totalRounds, w * 0.5, h * 0.12 + 20 * dpr);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = GO_COLOR;
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText('GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to play again', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0, lastT = 0;
+    function loop(t) {
+      const dt = lastT ? Math.min(0.05, (t - lastT) / 1000) : 0;
+      lastT = t;
+      if (started && !ended) step(dt);
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', pointerDown);
+    addEventListener('touchstart', (e) => { pointerDown(); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown();
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

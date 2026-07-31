@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Brawl Arena</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #0F1B12; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #0F1B12; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#0F1B12';
+    const ARENA_COLOR = '#1D3320';
+    const PLAYER_COLOR = '#00E5FF';
+    const ENEMY_COLOR = '#FF3D57';
+    const BULLET_COLOR = '#FFC93C';
+
+    let dpr = 1, w = 0, h = 0, arenaR = 0, cx = 0, cy = 0;
+    let started = false, ended = false, muted = true, won = false;
+    let player = {}, enemies = [], bullets = [], score = 0;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      cx = w / 2; cy = h * 0.48;
+      arenaR = Math.min(w, h) * 0.42;
+      draw();
+    }
+
+    function reset() {
+      player = { x: cx, y: cy, hp: 100, angle: 0 };
+      enemies = [];
+      for (let i = 0; i < 4; i++) {
+        const ang = (Math.PI * 2 * i) / 4;
+        enemies.push({ x: cx + Math.cos(ang) * arenaR * 0.7, y: cy + Math.sin(ang) * arenaR * 0.7, hp: 30, cooldown: Math.random() * 60 });
+      }
+      bullets = []; score = 0; ended = false; won = false;
+      scoreEl.textContent = score;
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      const speed = 10 * dpr;
+      if (name === 'UP') player.y -= speed;
+      if (name === 'DOWN') player.y += speed;
+      if (name === 'LEFT') player.x -= speed;
+      if (name === 'RIGHT') player.x += speed;
+      if (name === 'JUMP' || name === 'BOOST') fireAtNearest();
+    }
+
+    function fireAtNearest() {
+      let nearest = null, best = Infinity;
+      enemies.forEach((e) => {
+        if (e.hp <= 0) return;
+        const d = Math.hypot(e.x - player.x, e.y - player.y);
+        if (d < best) { best = d; nearest = e; }
+      });
+      if (!nearest) return;
+      const angle = Math.atan2(nearest.y - player.y, nearest.x - player.x);
+      bullets.push({ x: player.x, y: player.y, vx: Math.cos(angle) * 9 * dpr, vy: Math.sin(angle) * 9 * dpr, from: 'player' });
+    }
+
+    let dragTarget = null;
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      dragTarget = { x, y };
+      fireAtNearest();
+    }
+    function pointerMove(x, y) { if (dragTarget) dragTarget = { x, y }; }
+    function pointerUp() { dragTarget = null; }
+
+    function step() {
+      if (dragTarget) {
+        const dx = dragTarget.x - player.x, dy = dragTarget.y - player.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 6 * dpr) {
+          player.x += (dx / dist) * 6 * dpr;
+          player.y += (dy / dist) * 6 * dpr;
+        }
+      }
+      const distFromCenter = Math.hypot(player.x - cx, player.y - cy);
+      if (distFromCenter > arenaR) {
+        const angle = Math.atan2(player.y - cy, player.x - cx);
+        player.x = cx + Math.cos(angle) * arenaR;
+        player.y = cy + Math.sin(angle) * arenaR;
+      }
+
+      enemies.forEach((e) => {
+        if (e.hp <= 0) return;
+        e.cooldown--;
+        if (e.cooldown <= 0) {
+          e.cooldown = 70 + Math.random() * 40;
+          const angle = Math.atan2(player.y - e.y, player.x - e.x);
+          bullets.push({ x: e.x, y: e.y, vx: Math.cos(angle) * 6 * dpr, vy: Math.sin(angle) * 6 * dpr, from: 'enemy' });
+        }
+      });
+
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        b.x += b.vx; b.y += b.vy;
+        if (Math.hypot(b.x - cx, b.y - cy) > arenaR + 40 * dpr) { bullets.splice(i, 1); continue; }
+        if (b.from === 'player') {
+          enemies.forEach((e) => {
+            if (e.hp > 0 && Math.hypot(b.x - e.x, b.y - e.y) < 20 * dpr) {
+              e.hp -= 15; bullets.splice(i, 1);
+              if (e.hp <= 0) { score += 25; scoreEl.textContent = score; }
+            }
+          });
+        } else if (Math.hypot(b.x - player.x, b.y - player.y) < 18 * dpr) {
+          player.hp -= 10;
+          bullets.splice(i, 1);
+          if (player.hp <= 0) { ended = true; won = false; }
+        }
+      }
+
+      if (enemies.every((e) => e.hp <= 0)) { ended = true; won = true; score += 50; scoreEl.textContent = score; }
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.fillStyle = ARENA_COLOR;
+      ctx.beginPath();
+      ctx.arc(cx, cy, arenaR, 0, Math.PI * 2);
+      ctx.fill();
+
+      bullets.forEach((b) => {
+        ctx.fillStyle = BULLET_COLOR;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, 5 * dpr, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      enemies.forEach((e) => {
+        if (e.hp <= 0) return;
+        ctx.fillStyle = ENEMY_COLOR;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, 16 * dpr, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,.3)';
+        ctx.fillRect(e.x - 16 * dpr, e.y - 26 * dpr, 32 * dpr, 4 * dpr);
+        ctx.fillStyle = ENEMY_COLOR;
+        ctx.fillRect(e.x - 16 * dpr, e.y - 26 * dpr, 32 * dpr * (e.hp / 30), 4 * dpr);
+      });
+
+      ctx.fillStyle = PLAYER_COLOR;
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, 18 * dpr, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 90 * dpr, h * 0.06, 180 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 ' + (13 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('HP: ' + Math.max(0, Math.round(player.hp)), w * 0.5, h * 0.06 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (20 * dpr) + 'px Arial';
+        ctx.fillText('DRAG TO MOVE, TAP TO SHOOT', w / 2, h * 0.9);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = won ? PLAYER_COLOR : ENEMY_COLOR;
+        ctx.font = '900 ' + (28 * dpr) + 'px Arial';
+        ctx.fillText(won ? 'VICTORY!' : 'DEFEATED', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() {
+      if (started && !ended) step();
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('pointermove', (e) => { if (e.buttons) pointerMove(e.clientX * dpr, e.clientY * dpr); });
+    addEventListener('pointerup', pointerUp);
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('touchmove', (e) => { const t = e.touches[0]; if (t) pointerMove(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('touchend', pointerUp, { passive: true });
+    addEventListener('keydown', (e) => {
+      if (!started) start();
+      if (e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') control('UP');
+      if (e.key === 'ArrowDown' || e.key.toLowerCase() === 's') control('DOWN');
+      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') control('LEFT');
+      if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') control('RIGHT');
+      if (e.key === ' ') { e.preventDefault(); fireAtNearest(); }
+    });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER') {
+        if (data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+        if (data.kind === 'pointerup') pointerUp();
+      }
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

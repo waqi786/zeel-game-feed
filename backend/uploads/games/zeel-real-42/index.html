@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Fruit Catcher</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #1A2E1A; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #1A2E1A; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#1A2E1A';
+    const BASKET_COLOR = '#FFC93C';
+    const BAD_COLOR = '#FF3D57';
+    const FRUIT_COLORS = ['#FF6B6B', '#FFD166', '#06D6A0', '#4ECDC4', '#C77DFF'];
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true;
+    let basketX = 0, items = [], score = 0, lives = 3, elapsed = 0, spawnTimer = 0;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      basketX = w / 2;
+      draw();
+    }
+
+    function reset() {
+      items = []; score = 0; lives = 3; elapsed = 0; spawnTimer = 0; ended = false;
+      basketX = w / 2;
+      scoreEl.textContent = score;
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      if (name === 'LEFT') basketX -= 36 * dpr;
+      if (name === 'RIGHT') basketX += 36 * dpr;
+    }
+
+    function pointerMove(x) { if (started && !ended) basketX = x; }
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      pointerMove(x);
+    }
+
+    function spawnItem() {
+      const isBad = Math.random() < 0.22;
+      items.push({
+        x: 20 * dpr + Math.random() * (w - 40 * dpr),
+        y: -20 * dpr,
+        speed: (2.4 + elapsed * 0.035) * dpr,
+        bad: isBad,
+        color: isBad ? BAD_COLOR : FRUIT_COLORS[Math.floor(Math.random() * FRUIT_COLORS.length)]
+      });
+    }
+
+    function step(dt) {
+      elapsed += dt;
+      basketX = Math.max(30 * dpr, Math.min(w - 30 * dpr, basketX));
+
+      spawnTimer -= dt;
+      if (spawnTimer <= 0) { spawnTimer = Math.max(0.35, 0.85 - elapsed * 0.01); spawnItem(); }
+
+      for (let i = items.length - 1; i >= 0; i--) {
+        const it = items[i];
+        it.y += it.speed;
+        if (it.y > h + 20 * dpr) { items.splice(i, 1); continue; }
+        if (Math.abs(it.y - h * 0.84) < 24 * dpr && Math.abs(it.x - basketX) < 34 * dpr) {
+          items.splice(i, 1);
+          if (it.bad) {
+            lives--;
+            if (lives <= 0) ended = true;
+          } else {
+            score += 10;
+            scoreEl.textContent = score;
+          }
+        }
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      items.forEach((it) => {
+        ctx.fillStyle = it.color;
+        ctx.beginPath();
+        ctx.arc(it.x, it.y, 14 * dpr, 0, Math.PI * 2);
+        ctx.fill();
+        if (it.bad) {
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 2 * dpr;
+          ctx.beginPath();
+          ctx.moveTo(it.x - 6 * dpr, it.y - 6 * dpr);
+          ctx.lineTo(it.x + 6 * dpr, it.y + 6 * dpr);
+          ctx.moveTo(it.x + 6 * dpr, it.y - 6 * dpr);
+          ctx.lineTo(it.x - 6 * dpr, it.y + 6 * dpr);
+          ctx.stroke();
+        }
+      });
+
+      ctx.fillStyle = BASKET_COLOR;
+      ctx.beginPath();
+      ctx.roundRect(basketX - 34 * dpr, h * 0.84 - 12 * dpr, 68 * dpr, 24 * dpr, 8 * dpr);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 90 * dpr, h * 0.06, 180 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 ' + (13 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('LIVES: ' + Math.max(0, lives), w * 0.5, h * 0.06 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (22 * dpr) + 'px Arial';
+        ctx.fillText('DRAG TO CATCH FRUIT', w / 2, h * 0.45);
+        ctx.font = '700 ' + (14 * dpr) + 'px Arial';
+        ctx.fillText('AVOID THE X BOMBS', w / 2, h * 0.5);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = BAD_COLOR;
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText('GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0, lastT = 0;
+    function loop(t) {
+      const dt = lastT ? Math.min(0.05, (t - lastT) / 1000) : 0;
+      lastT = t;
+      if (started && !ended) step(dt);
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('pointermove', (e) => { if (e.buttons) pointerMove(e.clientX * dpr); });
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('touchmove', (e) => { const t = e.touches[0]; if (t) pointerMove(t.clientX * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER') {
+        if (data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+        else pointerMove(Number(data.x) * dpr);
+      }
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

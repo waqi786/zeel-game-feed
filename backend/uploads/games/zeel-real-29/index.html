@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Word Scramble</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #101820; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #101820; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#101820';
+    const LETTER_COLOR = '#5B8DEF';
+    const SLOT_COLOR = '#1B2733';
+    const WORDS = ['GAME','TIKTOK','ZEEL','MUSIC','VIDEO','LEVEL','SCORE','TIMER','PIXEL','CLOUD','SPACE','LIGHT','TIGER','OCEAN','MAGIC'];
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true;
+    let word = '', letters = [], slots = [], score = 0, round = 0, totalRounds = 6, tileSize = 0, tileRects = [], slotRects = [];
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      layout();
+      draw();
+    }
+
+    function shuffle(arr) {
+      const a = [...arr];
+      for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+      return a;
+    }
+
+    function newWord() {
+      word = WORDS[Math.floor(Math.random() * WORDS.length)];
+      let scrambled;
+      do { scrambled = shuffle(word.split('')); } while (scrambled.join('') === word);
+      letters = scrambled.map((ch) => ({ ch, used: false }));
+      slots = Array(word.length).fill(null);
+      layout();
+    }
+
+    function layout() {
+      tileSize = Math.min(56 * dpr, (w - 20 * dpr) / Math.max(6, letters.length || 6));
+      const totalW = tileSize * (letters.length || 0) + (letters.length - 1) * 8 * dpr;
+      const startX = (w - totalW) / 2;
+      tileRects = (letters || []).map((_, i) => ({ x: startX + i * (tileSize + 8 * dpr), y: h * 0.62, w: tileSize, h: tileSize }));
+      const totalSW = tileSize * (slots.length || 0) + (slots.length - 1) * 8 * dpr;
+      const startSX = (w - totalSW) / 2;
+      slotRects = (slots || []).map((_, i) => ({ x: startSX + i * (tileSize + 8 * dpr), y: h * 0.38, w: tileSize, h: tileSize }));
+    }
+
+    function reset() {
+      score = 0; round = 0; ended = false;
+      scoreEl.textContent = score;
+      newWord();
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) { if (ended) { reset(); return; } if (!started) start(); }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      for (let i = 0; i < slotRects.length; i++) {
+        const s = slotRects[i];
+        if (slots[i] && x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h) {
+          const letterIdx = letters.findIndex((l) => l.ch === slots[i] && l.used);
+          if (letterIdx >= 0) letters[letterIdx].used = false;
+          slots[i] = null;
+          return;
+        }
+      }
+      for (let i = 0; i < tileRects.length; i++) {
+        const t = tileRects[i];
+        if (!letters[i].used && x >= t.x && x <= t.x + t.w && y >= t.y && y <= t.y + t.h) {
+          const emptySlot = slots.findIndex((s) => s === null);
+          if (emptySlot >= 0) {
+            slots[emptySlot] = letters[i].ch;
+            letters[i].used = true;
+            checkComplete();
+          }
+          return;
+        }
+      }
+    }
+
+    function checkComplete() {
+      if (slots.every((s) => s !== null)) {
+        const guess = slots.join('');
+        round++;
+        if (guess === word) { score += 20; }
+        scoreEl.textContent = score;
+        if (round >= totalRounds) { setTimeout(() => { ended = true; }, 400); }
+        else { setTimeout(newWord, 500); }
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.fillStyle = 'rgba(255,255,255,.8)';
+      ctx.font = '900 ' + (14 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('UNSCRAMBLE THE WORD  (' + round + '/' + totalRounds + ')', w / 2, h * 0.28);
+
+      slotRects.forEach((s, i) => {
+        ctx.fillStyle = SLOT_COLOR;
+        ctx.beginPath();
+        ctx.roundRect(s.x, s.y, s.w, s.h, 6 * dpr);
+        ctx.fill();
+        if (slots[i]) {
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = '900 ' + Math.floor(tileSize * 0.5) + 'px Arial';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(slots[i], s.x + s.w / 2, s.y + s.h / 2 + 2 * dpr);
+          ctx.textBaseline = 'alphabetic';
+        }
+      });
+
+      tileRects.forEach((t, i) => {
+        if (letters[i].used) return;
+        ctx.fillStyle = LETTER_COLOR;
+        ctx.beginPath();
+        ctx.roundRect(t.x, t.y, t.w, t.h, 6 * dpr);
+        ctx.fill();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + Math.floor(tileSize * 0.5) + 'px Arial';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(letters[i].ch, t.x + t.w / 2, t.y + t.h / 2 + 2 * dpr);
+        ctx.textBaseline = 'alphabetic';
+      });
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (22 * dpr) + 'px Arial';
+        ctx.fillText('TAP LETTERS TO SPELL WORD', w / 2, h * 0.16);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = LETTER_COLOR;
+        ctx.font = '900 ' + (30 * dpr) + 'px Arial';
+        ctx.fillText('COMPLETE!', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to play again', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() { draw(); raf = requestAnimationFrame(loop); }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>

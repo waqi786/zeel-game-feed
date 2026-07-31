@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>2048 Merge</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #16130D; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #16130D; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#16130D';
+    const CELL_BG = 'rgba(255,255,255,.06)';
+    const TILE_COLORS = {
+      2: '#EEE4DA', 4: '#EDE0C8', 8: '#F2B179', 16: '#F59563',
+      32: '#F67C5F', 64: '#F65E3B', 128: '#EDCF72', 256: '#EDCC61',
+      512: '#EDC850', 1024: '#EDC53F', 2048: '#00E676'
+    };
+
+    let dpr = 1, w = 0, h = 0, size = 4, boardPx = 0, gap = 0, top = 0, left = 0;
+    let grid, score = 0, ended = false, won = false, started = false, muted = true;
+    let animT = 1;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      boardPx = w - 48 * dpr;
+      left = 24 * dpr;
+      top = h * 0.30;
+      gap = 10 * dpr;
+      draw();
+    }
+
+    function emptyGrid() {
+      return Array.from({ length: size }, () => Array(size).fill(0));
+    }
+
+    function reset() {
+      grid = emptyGrid();
+      score = 0; ended = false; won = false;
+      scoreEl.textContent = score;
+      addRandomTile(); addRandomTile();
+    }
+
+    function addRandomTile() {
+      const empties = [];
+      for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) if (grid[r][c] === 0) empties.push([r, c]);
+      if (!empties.length) return;
+      const [r, c] = empties[Math.floor(Math.random() * empties.length)];
+      grid[r][c] = Math.random() < 0.9 ? 2 : 4;
+    }
+
+    function start() {
+      hud.style.display = 'flex';
+      started = true;
+      raf = requestAnimationFrame(loop);
+    }
+
+    function slideRow(row) {
+      const filtered = row.filter((v) => v !== 0);
+      const result = [];
+      let gained = 0;
+      for (let i = 0; i < filtered.length; i++) {
+        if (filtered[i] === filtered[i + 1]) {
+          const merged = filtered[i] * 2;
+          result.push(merged);
+          gained += merged;
+          if (merged === 2048) won = true;
+          i++;
+        } else {
+          result.push(filtered[i]);
+        }
+      }
+      while (result.length < size) result.push(0);
+      return { row: result, gained };
+    }
+
+    function reverse(row) { return [...row].reverse(); }
+    function transpose(g) {
+      const t = emptyGrid();
+      for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) t[c][r] = g[r][c];
+      return t;
+    }
+
+    function move(dir) {
+      if (ended || !started) return;
+      let moved = false;
+      let totalGain = 0;
+      let g = grid.map((row) => [...row]);
+
+      if (dir === 'left' || dir === 'right') {
+        for (let r = 0; r < size; r++) {
+          let row = g[r];
+          if (dir === 'right') row = reverse(row);
+          const { row: newRow, gained } = slideRow(row);
+          totalGain += gained;
+          const finalRow = dir === 'right' ? reverse(newRow) : newRow;
+          if (finalRow.some((v, i) => v !== g[r][i])) moved = true;
+          g[r] = finalRow;
+        }
+      } else {
+        let t = transpose(g);
+        for (let r = 0; r < size; r++) {
+          let row = t[r];
+          if (dir === 'down') row = reverse(row);
+          const { row: newRow, gained } = slideRow(row);
+          totalGain += gained;
+          const finalRow = dir === 'down' ? reverse(newRow) : newRow;
+          if (finalRow.some((v, i) => v !== t[r][i])) moved = true;
+          t[r] = finalRow;
+        }
+        g = transpose(t);
+      }
+
+      if (moved) {
+        grid = g;
+        score += totalGain;
+        scoreEl.textContent = score;
+        addRandomTile();
+        animT = 0;
+        if (!canMove()) ended = true;
+      }
+    }
+
+    function canMove() {
+      for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) {
+        if (grid[r][c] === 0) return true;
+        if (c < size - 1 && grid[r][c] === grid[r][c + 1]) return true;
+        if (r < size - 1 && grid[r][c] === grid[r + 1][c]) return true;
+      }
+      return false;
+    }
+
+    function control(name) {
+      if (ended) { reset(); return; }
+      if (!started) start();
+      if (name === 'LEFT') move('left');
+      if (name === 'RIGHT') move('right');
+      if (name === 'JUMP') move('up');
+      if (name === 'BOOST') move('down');
+    }
+
+    let startX = 0, startY = 0, dragging = false;
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) start();
+      startX = x; startY = y; dragging = true;
+    }
+    function pointerUp(x, y) {
+      if (!dragging) return;
+      dragging = false;
+      const dx = x - startX, dy = y - startY;
+      const absX = Math.abs(dx), absY = Math.abs(dy);
+      if (Math.max(absX, absY) < 22) return;
+      if (absX > absY) move(dx > 0 ? 'right' : 'left');
+      else move(dy > 0 ? 'down' : 'up');
+    }
+
+    function cellRect(r, c) {
+      const cellSize = (boardPx - gap * (size + 1)) / size;
+      const x = left + gap + c * (cellSize + gap);
+      const y = top + gap + r * (cellSize + gap);
+      return { x, y, size: cellSize };
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.fillStyle = 'rgba(255,255,255,.03)';
+      ctx.beginPath();
+      ctx.roundRect(left, top, boardPx, boardPx, 16 * dpr);
+      ctx.fill();
+
+      for (let r = 0; r < size; r++) {
+        for (let c = 0; c < size; c++) {
+          const { x, y, size: cs } = cellRect(r, c);
+          ctx.fillStyle = CELL_BG;
+          ctx.beginPath();
+          ctx.roundRect(x, y, cs, cs, 10 * dpr);
+          ctx.fill();
+        }
+      }
+
+      for (let r = 0; r < size; r++) {
+        for (let c = 0; c < size; c++) {
+          const val = grid[r][c];
+          if (!val) continue;
+          const { x, y, size: cs } = cellRect(r, c);
+          ctx.fillStyle = TILE_COLORS[val] || '#3D3A34';
+          ctx.beginPath();
+          ctx.roundRect(x, y, cs, cs, 10 * dpr);
+          ctx.fill();
+          ctx.fillStyle = val <= 4 ? '#5B4636' : '#FFFFFF';
+          ctx.font = '900 ' + Math.floor(cs * (val > 512 ? 0.32 : 0.4)) + 'px Arial';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(String(val), x + cs / 2, y + cs / 2 + 2 * dpr);
+        }
+      }
+      ctx.textBaseline = 'alphabetic';
+
+      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 130 * dpr, h * 0.20, 260 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,.85)';
+      ctx.font = '900 ' + (11 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('SWIPE TO MERGE TILES', w * 0.5, h * 0.20 + 20 * dpr);
+
+      if (ended || won) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = won ? '#00E676' : '#F65E3B';
+        ctx.font = '900 ' + (32 * dpr) + 'px Arial';
+        ctx.fillText(won ? 'YOU MADE 2048!' : 'GAME OVER', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0;
+    function loop() { draw(); raf = requestAnimationFrame(loop); }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('pointerup', (e) => pointerUp(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('touchend', (e) => { const t = e.changedTouches[0]; if (t) pointerUp(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('keydown', (e) => {
+      if (!started) start();
+      if (e.key === 'ArrowLeft' || e.key.toLowerCase() === 'a') { e.preventDefault(); move('left'); }
+      if (e.key === 'ArrowRight' || e.key.toLowerCase() === 'd') { e.preventDefault(); move('right'); }
+      if (e.key === 'ArrowUp' || e.key.toLowerCase() === 'w') { e.preventDefault(); move('up'); }
+      if (e.key === 'ArrowDown' || e.key.toLowerCase() === 's') { e.preventDefault(); move('down'); }
+    });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') start();
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER') {
+        if (data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+        else if (dragging) { /* track move for release detection via last position */ lastMoveX = Number(data.x) * dpr; lastMoveY = Number(data.y) * dpr; }
+      }
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+    let lastMoveX = 0, lastMoveY = 0;
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'ZEEL_POINTER' && dragging && data.kind !== 'pointerdown') {
+        const dx = lastMoveX - startX, dy = lastMoveY - startY;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) > 30) {
+          pointerUp(lastMoveX, lastMoveY);
+        }
+      }
+    });
+
+    resize();
+    reset();
+  </script>
+</body>
+</html>

@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Tank Command</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #14170F; font-family: Arial, sans-serif; user-select: none; }
+    canvas { display: block; width: 100vw; height: 100vh; touch-action: none; background: #14170F; }
+    .hud { position: fixed; left: 16px; top: max(116px, calc(env(safe-area-inset-top) + 96px)); z-index: 4; display: none; pointer-events: none; color: #fff; }
+    .pill { min-width: 82px; border: 1px solid rgba(255,255,255,.16); border-radius: 999px; background: rgba(0,0,0,.6); padding: 9px 12px; font-size: 12px; font-weight: 900; text-transform: uppercase; letter-spacing: .06em; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div class="hud" id="hud"><div class="pill">Score <span id="score">0</span></div></div>
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d', { alpha: false });
+    const hud = document.getElementById('hud');
+    const scoreEl = document.getElementById('score');
+
+    const BG = '#14170F';
+    const PATH_COLOR = '#3A3A2A';
+    const TANK_COLOR = '#5B8DEF';
+    const ENEMY_COLOR = '#FF3D57';
+    const BULLET_COLOR = '#FFC93C';
+
+    let dpr = 1, w = 0, h = 0;
+    let started = false, ended = false, muted = true, won = false;
+    let path = [], tanks = [], enemies = [], bullets = [], gold = 60, wave = 1, hp = 10, score = 0, spawnTimer = 0, waveTimer = 0, spawned = 0;
+
+    function resize() {
+      dpr = Math.min(devicePixelRatio || 1, 2);
+      const rw = innerWidth || 390, rh = innerHeight || 844;
+      w = Math.max(320, Math.floor(rw * dpr));
+      h = Math.max(560, Math.floor(rh * dpr));
+      canvas.width = w; canvas.height = h;
+      buildPath();
+      draw();
+    }
+
+    function buildPath() {
+      path = [
+        { x: -20 * dpr, y: h * 0.2 },
+        { x: w * 0.7, y: h * 0.2 },
+        { x: w * 0.7, y: h * 0.5 },
+        { x: w * 0.25, y: h * 0.5 },
+        { x: w * 0.25, y: h * 0.78 },
+        { x: w + 20 * dpr, y: h * 0.78 }
+      ];
+    }
+
+    function reset() {
+      tanks = []; enemies = []; bullets = []; gold = 60; wave = 1; hp = 10; score = 0; spawnTimer = 0; waveTimer = 0; spawned = 0; ended = false; won = false;
+      scoreEl.textContent = score;
+    }
+
+    function start() { hud.style.display = 'flex'; started = true; raf = requestAnimationFrame(loop); }
+    function control(name) { if (ended) { reset(); return; } if (!started) start(); }
+
+    function placeTank(x, y) {
+      if (gold < 20 || ended) return;
+      const nearPath = path.some((p, i) => {
+        if (i === 0) return false;
+        const a = path[i - 1], b = p;
+        const dist = distToSegment(x, y, a.x, a.y, b.x, b.y);
+        return dist < 60 * dpr;
+      });
+      if (nearPath) return;
+      tanks.push({ x, y, range: 100 * dpr, cooldown: 0 });
+      gold -= 20;
+    }
+
+    function distToSegment(px, py, x1, y1, x2, y2) {
+      const A = px - x1, B = py - y1, C = x2 - x1, D = y2 - y1;
+      const dot = A * C + B * D, lenSq = C * C + D * D;
+      let t = lenSq ? dot / lenSq : 0;
+      t = Math.max(0, Math.min(1, t));
+      const xx = x1 + t * C, yy = y1 + t * D;
+      return Math.hypot(px - xx, py - yy);
+    }
+
+    function pointerDown(x, y) {
+      if (ended) { reset(); return; }
+      if (!started) { start(); return; }
+      placeTank(x, y);
+    }
+
+    function spawnEnemy() {
+      spawned++;
+      enemies.push({ segment: 0, dist: 0, hp: 20 + wave * 8, speed: (0.9 + wave * 0.05) * dpr });
+    }
+
+    function enemyPos(e) {
+      let remaining = e.dist;
+      for (let i = 1; i < path.length; i++) {
+        const a = path[i - 1], b = path[i];
+        const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+        if (remaining <= segLen) {
+          const t = remaining / segLen;
+          return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+        }
+        remaining -= segLen;
+      }
+      return path[path.length - 1];
+    }
+
+    function totalPathLen() {
+      let len = 0;
+      for (let i = 1; i < path.length; i++) len += Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y);
+      return len;
+    }
+
+    function step(dt) {
+      spawnTimer -= dt;
+      const perWave = 6 + wave;
+      if (spawnTimer <= 0 && spawned < perWave) { spawnTimer = 0.8; spawnEnemy(); }
+      if (spawned >= perWave && enemies.length === 0) {
+        wave++; spawned = 0; gold += 25;
+      }
+
+      const pathLen = totalPathLen();
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i];
+        e.dist += e.speed;
+        if (e.dist >= pathLen) {
+          enemies.splice(i, 1);
+          hp--;
+          if (hp <= 0) { ended = true; won = false; }
+        }
+      }
+
+      tanks.forEach((t) => {
+        t.cooldown -= dt;
+        if (t.cooldown <= 0) {
+          const target = enemies.find((e) => {
+            const p = enemyPos(e);
+            return Math.hypot(p.x - t.x, p.y - t.y) < t.range;
+          });
+          if (target) {
+            t.cooldown = 0.6;
+            const p = enemyPos(target);
+            bullets.push({ x: t.x, y: t.y, tx: target, speed: 12 * dpr });
+          }
+        }
+      });
+
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        if (!enemies.includes(b.tx)) { bullets.splice(i, 1); continue; }
+        const p = enemyPos(b.tx);
+        const dx = p.x - b.x, dy = p.y - b.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < b.speed) {
+          b.tx.hp -= 12;
+          if (b.tx.hp <= 0) {
+            const idx = enemies.indexOf(b.tx);
+            if (idx >= 0) enemies.splice(idx, 1);
+            score += 10; gold += 5;
+            scoreEl.textContent = score;
+          }
+          bullets.splice(i, 1);
+        } else {
+          b.x += (dx / dist) * b.speed;
+          b.y += (dy / dist) * b.speed;
+        }
+      }
+
+      if (wave > 8) { ended = true; won = true; score += 100; scoreEl.textContent = score; }
+    }
+
+    function draw() {
+      ctx.fillStyle = BG;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.strokeStyle = PATH_COLOR;
+      ctx.lineWidth = 46 * dpr;
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      path.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+      ctx.stroke();
+
+      tanks.forEach((t) => {
+        ctx.fillStyle = 'rgba(91,141,239,.12)';
+        ctx.beginPath(); ctx.arc(t.x, t.y, t.range, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = TANK_COLOR;
+        ctx.beginPath(); ctx.arc(t.x, t.y, 16 * dpr, 0, Math.PI * 2); ctx.fill();
+      });
+
+      bullets.forEach((b) => {
+        ctx.fillStyle = BULLET_COLOR;
+        ctx.beginPath(); ctx.arc(b.x, b.y, 4 * dpr, 0, Math.PI * 2); ctx.fill();
+      });
+
+      enemies.forEach((e) => {
+        const p = enemyPos(e);
+        ctx.fillStyle = ENEMY_COLOR;
+        ctx.beginPath(); ctx.arc(p.x, p.y, 13 * dpr, 0, Math.PI * 2); ctx.fill();
+      });
+
+      ctx.fillStyle = 'rgba(0,0,0,.5)';
+      ctx.beginPath();
+      ctx.roundRect(w * 0.5 - 130 * dpr, h * 0.04, 260 * dpr, 30 * dpr, 999 * dpr);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = '900 ' + (12 * dpr) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('WAVE ' + wave + '  HP ' + Math.max(0, hp) + '  GOLD ' + gold, w * 0.5, h * 0.04 + 20 * dpr);
+
+      if (!started) {
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '900 ' + (18 * dpr) + 'px Arial';
+        ctx.fillText('TAP TO PLACE TANKS (20 GOLD)', w / 2, h * 0.92);
+      }
+
+      if (ended) {
+        ctx.fillStyle = 'rgba(0,0,0,.72)';
+        ctx.fillRect(0, 0, w, h);
+        ctx.fillStyle = won ? TANK_COLOR : ENEMY_COLOR;
+        ctx.font = '900 ' + (28 * dpr) + 'px Arial';
+        ctx.fillText(won ? 'VICTORY!' : 'BASE OVERRUN', w / 2, h * 0.44);
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '800 ' + (16 * dpr) + 'px Arial';
+        ctx.fillText('Score: ' + score, w / 2, h * 0.50);
+        ctx.font = '700 ' + (13 * dpr) + 'px Arial';
+        ctx.fillText('Tap to restart', w / 2, h * 0.56);
+      }
+    }
+
+    let raf = 0, lastT = 0;
+    function loop(t) {
+      const dt = lastT ? Math.min(0.05, (t - lastT) / 1000) : 0;
+      lastT = t;
+      if (started && !ended) step(dt);
+      draw();
+      raf = requestAnimationFrame(loop);
+    }
+    function setMuted(v) { muted = Boolean(v); }
+
+    addEventListener('resize', resize);
+    addEventListener('pointerdown', (e) => pointerDown(e.clientX * dpr, e.clientY * dpr));
+    addEventListener('touchstart', (e) => { const t = e.touches[0]; if (t) pointerDown(t.clientX * dpr, t.clientY * dpr); }, { passive: true });
+    addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (data.type === 'START_GAME') { if (!started) start(); }
+      if (data.type === 'globalMute') setMuted(data.value);
+      if (data.type === 'ZEEL_POINTER' && data.kind === 'pointerdown') pointerDown(Number(data.x) * dpr, Number(data.y) * dpr);
+      if (data.type === 'ZEEL_CONTROL') control(data.control);
+    });
+
+    resize();
+    reset();
+    hud.style.display = 'flex';
+  </script>
+</body>
+</html>
